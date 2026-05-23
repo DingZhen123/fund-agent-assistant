@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.fundagent.repo.mapper.ConversationMapper">
+
+    <select id="findByUserId" resultType="com.fundagent.repo.entity.ConversationEntity">
+        SELECT id, user_id, title, status, message_count, created_at, updated_at
+        FROM conversations
+        WHERE user_id = #{userId}
+        ORDER BY updated_at DESC
+    </select>
+
+</mapper>

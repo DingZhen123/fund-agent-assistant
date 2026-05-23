@@ -1,0 +1,144 @@
+package com.fundagent.server.service;
+
+import com.fundagent.core.memory.Memory;
+import com.fundagent.core.orchestration.OrchestrationEvent;
+import com.fundagent.core.orchestration.OrchestrationResult;
+import com.fundagent.core.orchestration.Orchestrator;
+import com.fundagent.core.post.Post;
+import com.fundagent.repo.entity.ConversationEntity;
+import com.fundagent.repo.mapper.ConversationMapper;
+import com.fundagent.repo.mapper.PostMapper;
+import com.fundagent.server.config.ConversationSession;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+import java.io.IOException;
+import java.util.List;
+import java.util.function.Consumer;
+
+@Slf4j
+@Service
+public class ChatService {
+
+    private final Orchestrator orchestrator;
+    private final SessionService sessionService;
+    private final MemoryService memoryService;
+    private final ConversationMapper conversationMapper;
+    private final PostMapper postMapper;
+
+    public ChatService(Orchestrator orchestrator, SessionService sessionService,
+                       MemoryService memoryService, ConversationMapper conversationMapper,
+                       PostMapper postMapper) {
+        this.orchestrator = orchestrator;
+        this.sessionService = sessionService;
+        this.memoryService = memoryService;
+        this.conversationMapper = conversationMapper;
+        this.postMapper = postMapper;
+    }
+
+    public void sendMessage(String userId, String message, String conversationId, SseEmitter emitter) {
+        try {
+            ConversationSession session = sessionService.getSession(userId);
+            boolean isNew = (conversationId == null || conversationId.isEmpty());
+
+            if (session == null || isNew) {
+                String title = message.length() > 20 ? message.substring(0, 20) + "..." : message;
+                ConversationEntity conv = new ConversationEntity();
+                conv.setUserId(userId);
+                conv.setTitle(title);
+                conv.setStatus("active");
+                conv.setMessageCount(0);
+                conversationMapper.insert(conv);
+                conversationId = conv.getId().toString();
+                sessionService.saveSession(userId, conversationId);
+            } else {
+                conversationId = session.getConversationId();
+                sessionService.refreshSession(userId);
+            }
+
+            Long convId = Long.parseLong(conversationId);
+            String cid = conversationId;
+
+            Memory memory = isNew
+                    ? memoryService.getOrCreate(cid)
+                    : memoryService.loadFromHistory(convId);
+
+            Consumer<OrchestrationEvent> listener = event -> {
+                try {
+                    emitter.send(SseEmitter.event()
+                            .name(event.getType().name().toLowerCase())
+                            .data(new SseEvent(event.getType().name(), event.getAgent(), event.getMessage())));
+                } catch (IOException e) {
+                    log.error("SSE send error", e);
+                }
+            };
+
+            Consumer<String> onToken = token -> {
+                try {
+                    emitter.send(SseEmitter.event()
+                            .name("token")
+                            .data(token));
+                } catch (IOException e) {
+                    log.error("SSE token send error", e);
+                }
+            };
+
+            OrchestrationResult result = orchestrator.processMessage(memory, message, listener, onToken);
+            log.info("Orchestration done: posts.size={}, answer={}",
+                    result.getAllPosts() != null ? result.getAllPosts().size() : 0,
+                    result.getFinalAnswer());
+
+            int roundNum = memory.getCurrentRound() != null ? memory.getCurrentRound().getRoundNum() : 1;
+            memoryService.savePosts(convId, result.getAllPosts(), roundNum);
+            log.info("Posts saved to DB for conversation {}", convId);
+
+            ConversationEntity conv = conversationMapper.selectById(convId);
+            if (conv != null) {
+                conv.setMessageCount(memory.getAllPosts().size());
+                conversationMapper.updateById(conv);
+            }
+
+            emitter.send(SseEmitter.event()
+                    .name("message_end")
+                    .data(new SseEnd(cid, result.getFinalAnswer())));
+            emitter.complete();
+
+        } catch (Exception e) {
+            log.error("ChatService error", e);
+            try {
+                emitter.send(SseEmitter.event().name("error").data("系统错误: " + e.getMessage()));
+                emitter.complete();
+            } catch (IOException ex) {
+                emitter.completeWithError(ex);
+            }
+        }
+    }
+
+    public List<ConversationEntity> getConversations(String userId) {
+        return conversationMapper.findByUserId(userId);
+    }
+
+    public List<com.fundagent.repo.entity.PostEntity> loadConversation(String userId, String conversationId) {
+        sessionService.saveSession(userId, conversationId);
+        memoryService.loadFromHistory(Long.parseLong(conversationId));
+        return postMapper.findByConversationId(Long.parseLong(conversationId));
+    }
+
+    @Data
+    @AllArgsConstructor
+    public static class SseEvent {
+        private String eventType;
+        private String agent;
+        private String message;
+    }
+
+    @Data
+    @AllArgsConstructor
+    public static class SseEnd {
+        private String conversationId;
+        private String answer;
+    }
+}

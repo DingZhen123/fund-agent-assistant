@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.fundagent.repo.mapper.PostMapper">
+
+    <select id="findByConversationId" resultType="com.fundagent.repo.entity.PostEntity">
+        SELECT id, conversation_id, round_num, send_from, send_to, message, attachments, created_at
+        FROM posts
+        WHERE conversation_id = #{conversationId}
+        ORDER BY round_num ASC, created_at ASC
+    </select>
+
+    <select id="findByConversationIdAfterRound" resultType="com.fundagent.repo.entity.PostEntity">
+        SELECT id, conversation_id, round_num, send_from, send_to, message, attachments, created_at
+        FROM posts
+        WHERE conversation_id = #{conversationId}
+          AND round_num &gt; #{minRoundNum}
+        ORDER BY round_num ASC, created_at ASC
+    </select>
+
+</mapper>

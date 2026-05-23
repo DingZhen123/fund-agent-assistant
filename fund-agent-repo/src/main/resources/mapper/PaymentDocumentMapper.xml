@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.fundagent.repo.mapper.PaymentDocumentMapper">
+
+    <select id="findByDocumentCode" resultType="com.fundagent.repo.entity.PaymentDocumentEntity">
+        SELECT id, document_code, document_type, status, amount, payer, payee,
+               pay_time, has_receipt, receipt_file_name, receipt_file_url, created_at, updated_at
+        FROM payment_documents
+        WHERE document_code = #{documentCode}
+    </select>
+
+    <select id="findByDocumentCodes" resultType="com.fundagent.repo.entity.PaymentDocumentEntity">
+        SELECT id, document_code, document_type, status, amount, payer, payee,
+               pay_time, has_receipt, receipt_file_name, receipt_file_url, created_at, updated_at
+        FROM payment_documents
+        WHERE document_code IN
+        <foreach collection="documentCodes" item="code" open="(" separator="," close=")">
+            #{code}
+        </foreach>
+    </select>
+
+</mapper>

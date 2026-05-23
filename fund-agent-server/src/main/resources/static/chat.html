@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>资金智能助手</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+               background: #f5f5f5; height: 100vh; display: flex; }
+        .sidebar { width: 280px; background: #1a1a2e; color: #eee; display: flex; flex-direction: column; }
+        .sidebar-header { padding: 20px; border-bottom: 1px solid #333; }
+        .sidebar-header h2 { font-size: 18px; color: #e94560; }
+        .sidebar-header input { width: 100%; padding: 8px; border-radius: 6px;
+                                border: 1px solid #444; background: #16213e;
+                                color: #eee; margin-top: 8px; font-size: 13px; }
+        .new-chat-btn { margin: 12px 20px; padding: 10px; background: #e94560;
+                        color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; }
+        .new-chat-btn:hover { background: #d63851; }
+        .conv-list { flex: 1; overflow-y: auto; }
+        .conv-item { padding: 12px 20px; cursor: pointer; border-bottom: 1px solid #2a2a4a; }
+        .conv-item:hover { background: #16213e; }
+        .conv-item.active { background: #0f3460; border-left: 3px solid #e94560; }
+        .conv-item .title { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .conv-item .meta { font-size: 11px; color: #888; margin-top: 2px; }
+        .main { flex: 1; display: flex; flex-direction: column; background: #fff; }
+        .main-header { padding: 16px 24px; border-bottom: 1px solid #eee; font-size: 16px; font-weight: 600; }
+        .chat-area { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 12px; }
+        .msg { max-width: 75%; padding: 10px 14px; border-radius: 10px; font-size: 14px; line-height: 1.6; }
+        .msg.user { align-self: flex-end; background: #e94560; color: #fff; }
+        .msg.agent { align-self: flex-start; background: #f0f0f5; color: #333; }
+        .msg.system { align-self: center; background: #fff3cd; color: #856404; font-size: 12px; padding: 6px 10px; }
+        .msg .label { font-size: 11px; opacity: 0.7; margin-bottom: 2px; }
+        .input-area { padding: 16px 24px; border-top: 1px solid #eee; display: flex; gap: 12px; }
+        .input-area textarea { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 8px;
+                               resize: none; font-size: 14px; height: 50px; outline: none; font-family: inherit; }
+        .input-area textarea:focus { border-color: #e94560; }
+        .input-area button { padding: 12px 24px; background: #e94560; color: #fff;
+                             border: none; border-radius: 8px; cursor: pointer; font-size: 14px; }
+        .input-area button:disabled { background: #ccc; cursor: not-allowed; }
+        .empty { flex: 1; display: flex; align-items: center; justify-content: center; color: #999; font-size: 16px; }
+        .loading { display: inline-block; width: 16px; height: 16px; border: 2px solid #f3f3f3;
+                   border-top: 2px solid #e94560; border-radius: 50%; animation: spin 0.8s linear infinite;
+                   margin-right: 6px; vertical-align: middle; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+<div class="sidebar">
+    <div class="sidebar-header">
+        <h2>资金智能助手</h2>
+        <input type="text" id="userIdInput" placeholder="用户ID" value="user001">
+    </div>
+    <button class="new-chat-btn" onclick="newChat()">+ 新对话</button>
+    <div class="conv-list" id="convList"></div>
+</div>
+<div class="main">
+    <div class="main-header" id="mainHeader">选择或新建对话</div>
+    <div class="chat-area" id="chatArea"><div class="empty">选择一个历史对话或新建对话开始</div></div>
+    <div class="input-area">
+        <textarea id="msgInput" placeholder="输入消息... 例如: 帮我查EC2025这笔单"
+                  onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send();}"></textarea>
+        <button id="sendBtn" onclick="send()">发送</button>
+    </div>
+</div>
+<script>
+    let convId = null;
+    let busy = false;
+
+    function uid() { return document.getElementById('userIdInput').value || 'user001'; }
+
+    async function loadConvs() {
+        try {
+            const convs = await (await fetch('/api/chat/conversations/' + uid())).json();
+            const list = document.getElementById('convList');
+            list.innerHTML = '';
+            convs.forEach(c => {
+                const div = document.createElement('div');
+                div.className = 'conv-item' + (c.id == convId ? ' active' : '');
+                div.dataset.id = c.id;
+                div.dataset.title = c.title || '';
+                div.innerHTML = `<div class="title">${c.title || '新对话'}</div>
+                    <div class="meta">${c.messageCount} 条 · ${c.updatedAt ? c.updatedAt.substring(0,16) : ''}</div>`;
+                div.addEventListener('click', () => selectConv(c.id, c.title));
+                list.appendChild(div);
+            });
+        } catch (e) { console.error('loadConvs error:', e); }
+    }
+
+    async function selectConv(id, title) {
+        console.log('selectConv called, id:', id, 'title:', title);
+        convId = id;
+        document.getElementById('mainHeader').textContent = title;
+        document.getElementById('chatArea').innerHTML = '';
+        try {
+            const posts = await (await fetch('/api/chat/select-conversation', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId: uid(), conversationId: id })
+            })).json();
+            for (const p of posts) {
+                if (p.sendFrom === 'User') addMsg('user', '', p.message);
+                else if (p.sendTo === 'User') addMsg('agent', p.sendFrom, p.message);
+                else addMsg('system', '', p.sendFrom + '→' + p.sendTo);
+            }
+        } catch (e) { console.error('selectConv error:', e); }
+        document.getElementById('chatArea').scrollTop = document.getElementById('chatArea').scrollHeight;
+        loadConvs();
+    }
+
+    function newChat() {
+        convId = null;
+        document.getElementById('mainHeader').textContent = '新对话';
+        document.getElementById('chatArea').innerHTML = '<div class="empty">新对话已创建，输入消息开始</div>';
+        loadConvs();
+    }
+
+    function addMsg(type, agent, text) {
+        const area = document.getElementById('chatArea');
+        const empty = area.querySelector('.empty');
+        if (empty) empty.remove();
+        const div = document.createElement('div');
+        div.className = 'msg ' + type;
+        if (agent) { const l = document.createElement('div'); l.className = 'label'; l.textContent = agent; div.appendChild(l); }
+        div.appendChild(document.createTextNode(text));
+        area.appendChild(div);
+        area.scrollTop = area.scrollHeight;
+    }
+
+    async function send() {
+        if (busy) return;
+        const msg = document.getElementById('msgInput').value.trim();
+        if (!msg) return;
+        busy = true;
+        document.getElementById('sendBtn').disabled = true;
+        document.getElementById('msgInput').value = '';
+
+        addMsg('user', '', msg);
+        const loadEl = document.createElement('div');
+        loadEl.className = 'msg system';
+        loadEl.innerHTML = '<span class="loading"></span>思考中...';
+        document.getElementById('chatArea').appendChild(loadEl);
+
+        let streamingDiv = null;
+
+        try {
+            const resp = await fetch('/api/chat/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId: uid(), message: msg, conversationId: convId || '' })
+            });
+            const reader = resp.body.getReader();
+            const dec = new TextDecoder();
+            let buf = '';
+            if (loadEl) loadEl.remove();
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buf += dec.decode(value, { stream: true });
+                const lines = buf.split('\n');
+                buf = lines.pop() || '';
+                for (const line of lines) {
+                    if (!line.startsWith('data:')) continue;
+                    try {
+                        const d = JSON.parse(line.substring(5).trim());
+                        if (d.eventType === 'ROUND_START' || d.eventType === 'AGENT_START') {
+                            addMsg('system', '', d.agent + ': ' + d.message);
+                        } else if (d.eventType === 'AGENT_END') {
+                            addMsg('agent', d.agent, d.message);
+                        } else if (d.answer) {
+                            addMsg('agent', '结果', d.answer);
+                        } else if (typeof d === 'string') {
+                            if (!streamingDiv) {
+                                streamingDiv = addMsg('agent', 'AI', '');
+                            }
+                            streamingDiv.appendChild(document.createTextNode(d));
+                            document.getElementById('chatArea').scrollTop = document.getElementById('chatArea').scrollHeight;
+                        }
+                        if (d.conversationId) {
+                            convId = d.conversationId;
+                            document.getElementById('mainHeader').textContent = msg.length > 20 ? msg.substring(0, 20) + '...' : msg;
+                            loadConvs();
+                        }
+                    } catch (e2) {}
+                }
+            }
+        } catch (e) {
+            if (loadEl) loadEl.remove();
+            addMsg('system', '', '发送失败: ' + e.message);
+        }
+        busy = false;
+        document.getElementById('sendBtn').disabled = false;
+    }
+
+    document.getElementById('userIdInput').addEventListener('change', () => { convId = null; loadConvs(); });
+    loadConvs();
+</script>
+</body>
+</html>
