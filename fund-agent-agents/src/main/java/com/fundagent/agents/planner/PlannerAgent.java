@@ -1,5 +1,6 @@
 package com.fundagent.agents.planner;
 
+import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.fundagent.common.model.Message;
@@ -8,8 +9,10 @@ import com.fundagent.core.agent.AgentDefinition;
 import com.fundagent.core.agent.AgentEntry;
 import com.fundagent.core.agent.AgentRegistry;
 import com.fundagent.core.memory.Memory;
+import com.fundagent.core.plan.Plan;
+import com.fundagent.core.plan.PlanValidationResult;
+import com.fundagent.core.plan.PlanValidator;
 import com.fundagent.core.post.Post;
-import com.fundagent.core.post.PostTranslator;
 import com.fundagent.core.tool.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.yaml.snakeyaml.Yaml;
@@ -27,17 +30,15 @@ import java.util.function.Consumer;
 public class PlannerAgent extends Agent {
     private final String systemPrompt;
     private final String planSchema;
-    private final PostTranslator translator;
+    private final PlanValidator planValidator;
     private final int contextRounds;
-    private final ToolRegistry toolRegistry;
 
     public PlannerAgent(AgentEntry entry, AgentRegistry agentRegistry,
                         ToolRegistry toolRegistry, int contextRounds) {
         super(entry);
-        this.toolRegistry = toolRegistry;
         this.systemPrompt = loadPrompt(agentRegistry, toolRegistry);
         this.planSchema = buildPlanSchema(toolRegistry);
-        this.translator = new PostTranslator(agentRegistry, 3);
+        this.planValidator = new PlanValidator(toolRegistry);
         this.contextRounds = contextRounds;
     }
 
@@ -113,8 +114,47 @@ public class PlannerAgent extends Agent {
                 planSchema);
         log.info("Planner raw: {}", rawResponse);
 
-        Post post = translator.parse("Planner", rawResponse);
+        Plan plan;
+        try {
+            plan = JSON.parseObject(rawResponse, Plan.class);
+        } catch (Exception e) {
+            log.error("Planner plan parse failed: raw={}", rawResponse, e);
+            PlanValidationResult validation = PlanValidationResult.error(
+                    "PLAN_PARSE_ERROR", "Planner输出不是合法Plan JSON", false);
+            return invalidPlanPost(validation);
+        }
+
+        PlanValidationResult validation = planValidator.validate(plan);
+        if (!validation.isValid()) {
+            log.error("Planner plan validation failed: code={}, message={}, raw={}",
+                    validation.getErrorCode(), validation.getMessage(), rawResponse);
+            return invalidPlanPost(validation);
+        }
+
+        Post post = toPost(plan);
         log.info("Planner route → {}: {}", post.getSendTo(), post.getMessage());
+        return post;
+    }
+
+    private Post toPost(Plan plan) {
+        Post post = Post.create("Planner", plan.getSendTo(), plan.getMessage() != null ? plan.getMessage() : "");
+        post.setTimestamp(System.currentTimeMillis());
+        if (plan.getPlanReasoning() != null && !plan.getPlanReasoning().isEmpty()) {
+            post.addAttachment("plan", plan.getPlanReasoning());
+        }
+        if ("Executor".equals(plan.getSendTo())) {
+            post.addAttachment("tool_name", plan.getToolName());
+            post.addAttachment("tool_params", JSON.toJSONString(plan.getToolParams()));
+        }
+        return post;
+    }
+
+    private Post invalidPlanPost(PlanValidationResult validation) {
+        String message = validation.isRecoverable()
+                ? "请补充必要信息：" + validation.getMessage()
+                : "系统内部错误：Planner输出不符合协议。";
+        Post post = Post.create("Planner", "User", message);
+        post.addAttachment("plan_validation_error", validation.getErrorCode() + ": " + validation.getMessage());
         return post;
     }
 
