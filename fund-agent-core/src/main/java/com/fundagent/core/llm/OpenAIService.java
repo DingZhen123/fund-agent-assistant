@@ -39,7 +39,7 @@ public class OpenAIService implements LLMService {
 
     @Override
     public String chat(String systemPrompt, List<Message> history, String currentMessage) {
-        String body = buildBody(systemPrompt, history, currentMessage, false);
+        String body = buildBody(systemPrompt, history, currentMessage, false, null, null);
         Request request = buildRequest(body);
         try (Response response = httpClient.newCall(request).execute()) {
             if (!response.isSuccessful()) {
@@ -57,9 +57,29 @@ public class OpenAIService implements LLMService {
     }
 
     @Override
+    public String chatStructured(String systemPrompt, List<Message> history, String currentMessage,
+                                 String schemaName, String schemaJson) {
+        String body = buildBody(systemPrompt, history, currentMessage, false, schemaName, schemaJson);
+        Request request = buildRequest(body);
+        try (Response response = httpClient.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                String err = response.body() != null ? response.body().string() : "";
+                log.error("LLM structured error: {} {}", response.code(), err);
+                throw new RuntimeException("LLM structured API error: " + response.code());
+            }
+            JSONObject json = JSON.parseObject(response.body().string());
+            return json.getJSONArray("choices").getJSONObject(0)
+                    .getJSONObject("message").getString("content");
+        } catch (IOException e) {
+            log.error("LLM structured request failed", e);
+            throw new RuntimeException("LLM structured request failed: " + e.getMessage(), e);
+        }
+    }
+
+    @Override
     public String chatStream(String systemPrompt, List<Message> history,
                               String currentMessage, Consumer<String> onToken) {
-        String body = buildBody(systemPrompt, history, currentMessage, true);
+        String body = buildBody(systemPrompt, history, currentMessage, true, null, null);
         Request request = buildRequest(body);
 
         try (Response response = httpClient.newCall(request).execute()) {
@@ -102,7 +122,8 @@ public class OpenAIService implements LLMService {
     }
 
     private String buildBody(String systemPrompt, List<Message> history,
-                              String currentMessage, boolean stream) {
+                              String currentMessage, boolean stream,
+                              String schemaName, String schemaJson) {
         JSONArray messages = new JSONArray();
         if (systemPrompt != null && !systemPrompt.isEmpty()) {
             JSONObject sys = new JSONObject();
@@ -129,6 +150,19 @@ public class OpenAIService implements LLMService {
         body.put("temperature", temperature);
         body.put("max_tokens", maxTokens);
         body.put("stream", stream);
+        if (schemaName != null && !schemaName.isEmpty()
+                && schemaJson != null && !schemaJson.isEmpty()) {
+            JSONObject responseFormat = new JSONObject();
+            responseFormat.put("type", "json_schema");
+
+            JSONObject jsonSchema = new JSONObject();
+            jsonSchema.put("name", schemaName);
+            jsonSchema.put("strict", true);
+            jsonSchema.put("schema", JSON.parseObject(schemaJson));
+
+            responseFormat.put("json_schema", jsonSchema);
+            body.put("response_format", responseFormat);
+        }
         return body.toJSONString();
     }
 

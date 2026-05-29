@@ -1,5 +1,7 @@
 package com.fundagent.agents.planner;
 
+import com.alibaba.fastjson2.JSONArray;
+import com.alibaba.fastjson2.JSONObject;
 import com.fundagent.common.model.Message;
 import com.fundagent.core.agent.Agent;
 import com.fundagent.core.agent.AgentDefinition;
@@ -14,21 +16,27 @@ import org.yaml.snakeyaml.Yaml;
 
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 
 @Slf4j
 @AgentDefinition(name = "Planner", description = "任务规划器，分析用户意图并路由到合适的执行器", isPlanner = true)
 public class PlannerAgent extends Agent {
     private final String systemPrompt;
+    private final String planSchema;
     private final PostTranslator translator;
     private final int contextRounds;
+    private final ToolRegistry toolRegistry;
 
     public PlannerAgent(AgentEntry entry, AgentRegistry agentRegistry,
                         ToolRegistry toolRegistry, int contextRounds) {
         super(entry);
+        this.toolRegistry = toolRegistry;
         this.systemPrompt = loadPrompt(agentRegistry, toolRegistry);
+        this.planSchema = buildPlanSchema(toolRegistry);
         this.translator = new PostTranslator(agentRegistry, 3);
         this.contextRounds = contextRounds;
     }
@@ -97,13 +105,66 @@ public class PlannerAgent extends Agent {
         if (log.isDebugEnabled()) {
             log.debug("Planner context: {}", context);
         }
-        String rawResponse = onToken != null
-                ? llmService.chatStream(systemPrompt, history, incoming.getMessage(), onToken)
-                : llmService.chat(systemPrompt, history, incoming.getMessage());
+        String rawResponse = llmService.chatStructured(
+                systemPrompt,
+                history,
+                incoming.getMessage(),
+                "planner_plan",
+                planSchema);
         log.info("Planner raw: {}", rawResponse);
 
         Post post = translator.parse("Planner", rawResponse);
         log.info("Planner route → {}: {}", post.getSendTo(), post.getMessage());
         return post;
+    }
+
+    private String buildPlanSchema(ToolRegistry toolRegistry) {
+        JSONObject root = new JSONObject();
+        root.put("type", "object");
+        root.put("additionalProperties", false);
+
+        JSONObject properties = new JSONObject();
+        properties.put("plan_reasoning", stringSchema());
+
+        JSONObject sendTo = stringSchema();
+        sendTo.put("enum", List.of("Executor", "User"));
+        properties.put("send_to", sendTo);
+
+        properties.put("message", stringSchema());
+
+        JSONObject toolName = stringSchema();
+        JSONArray toolNameEnum = new JSONArray();
+        toolNameEnum.add("");
+        toolRegistry.getAllTools().forEach(tool -> toolNameEnum.add(tool.getName()));
+        toolName.put("enum", toolNameEnum);
+        properties.put("tool_name", toolName);
+
+        JSONObject toolParams = new JSONObject();
+        toolParams.put("type", "object");
+        toolParams.put("additionalProperties", false);
+
+        JSONObject paramProperties = new JSONObject();
+        Set<String> paramNames = new LinkedHashSet<>();
+        toolRegistry.getAllTools().forEach(tool -> paramNames.addAll(tool.getParams()));
+        for (String paramName : paramNames) {
+            paramProperties.put(paramName, stringSchema());
+        }
+        toolParams.put("properties", paramProperties);
+        properties.put("tool_params", toolParams);
+
+        JSONObject stop = new JSONObject();
+        stop.put("type", "boolean");
+        properties.put("stop", stop);
+
+        root.put("properties", properties);
+        root.put("required", List.of("plan_reasoning", "send_to", "message",
+                "tool_name", "tool_params", "stop"));
+        return root.toJSONString();
+    }
+
+    private JSONObject stringSchema() {
+        JSONObject schema = new JSONObject();
+        schema.put("type", "string");
+        return schema;
     }
 }
