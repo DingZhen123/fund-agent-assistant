@@ -8,6 +8,7 @@ import com.fundagent.core.agent.AgentRegistry;
 import com.fundagent.core.memory.Memory;
 import com.fundagent.core.post.Post;
 import com.fundagent.core.post.PostTranslator;
+import com.fundagent.core.tool.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.yaml.snakeyaml.Yaml;
 
@@ -24,35 +25,41 @@ public class PlannerAgent extends Agent {
     private final PostTranslator translator;
     private final int contextRounds;
 
-    public PlannerAgent(AgentEntry entry, AgentRegistry agentRegistry, int contextRounds) {
+    public PlannerAgent(AgentEntry entry, AgentRegistry agentRegistry,
+                        ToolRegistry toolRegistry, int contextRounds) {
         super(entry);
-        this.systemPrompt = loadPrompt(agentRegistry);
+        this.systemPrompt = loadPrompt(agentRegistry, toolRegistry);
         this.translator = new PostTranslator(agentRegistry, 3);
         this.contextRounds = contextRounds;
     }
 
-    private String loadPrompt(AgentRegistry agentRegistry) {
+    private String loadPrompt(AgentRegistry agentRegistry, ToolRegistry toolRegistry) {
         try (InputStream is = getClass().getClassLoader()
                 .getResourceAsStream("prompts/planner-prompt.yaml")) {
             if (is != null) {
                 Yaml yaml = new Yaml();
                 Map<String, Object> data = yaml.load(is);
                 String template = (String) data.get("prompt");
-                return template.replace("{workers_description}", agentRegistry.getWorkersDescription());
+                return template
+                        .replace("{workers_description}", agentRegistry.getWorkersDescription())
+                        .replace("{tools_description}", toolRegistry.getToolsDescription());
             }
         } catch (Exception e) {
             log.warn("Failed to load planner prompt file, using default");
         }
-        return defaultPrompt(agentRegistry);
+        return defaultPrompt(agentRegistry, toolRegistry);
     }
 
-    private String defaultPrompt(AgentRegistry agentRegistry) {
+    private String defaultPrompt(AgentRegistry agentRegistry, ToolRegistry toolRegistry) {
         return """
                 你是一个资金系统智能助手的任务规划器。
                 分析用户意图，拆解任务，决定由谁执行。
 
                 可用执行器:
                 """ + agentRegistry.getWorkersDescription() + """
+
+                可用工具:
+                """ + toolRegistry.getToolsDescription() + """
 
                 输出JSON:
                 {
@@ -65,8 +72,9 @@ public class PlannerAgent extends Agent {
                 规则:
                 1. send_to只能是"Executor"或"User"
                 2. 需要调工具 → send_to="Executor"
-                3. 回复用户 → send_to="User", stop=true
-                4. 只输出纯JSON
+                3. tool_name必须逐字使用可用工具中的英文name，tool_params必须逐字使用可用工具中的英文参数名
+                4. 回复用户 → send_to="User", stop=true
+                5. 只输出纯JSON
                 """;
     }
 
@@ -84,7 +92,11 @@ public class PlannerAgent extends Agent {
             history.add(new Message("user", context));
         }
 
-        log.info("Planner processing: {}", incoming.getMessage());
+        log.info("Planner processing: {}, totalRounds={}, contextLength={}",
+                incoming.getMessage(), memory.getTotalRounds(), context.length());
+        if (log.isDebugEnabled()) {
+            log.debug("Planner context: {}", context);
+        }
         String rawResponse = onToken != null
                 ? llmService.chatStream(systemPrompt, history, incoming.getMessage(), onToken)
                 : llmService.chat(systemPrompt, history, incoming.getMessage());

@@ -105,8 +105,8 @@ public class AgentAutoConfig {
     }
 
     @Bean
-    public PlannerAgent plannerAgent(AgentRegistry registry) {
-        PlannerAgent agent = new PlannerAgent(plannerEntry(), registry, contextRounds);
+    public PlannerAgent plannerAgent(AgentRegistry registry, ToolRegistry toolRegistry) {
+        PlannerAgent agent = new PlannerAgent(plannerEntry(), registry, toolRegistry, contextRounds);
         agent.setLlmService(llmService());
         return agent;
     }

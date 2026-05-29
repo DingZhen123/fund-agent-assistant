@@ -1,6 +1,10 @@
 server:
   port: 8080
 
+logging:
+  file:
+    path: ./logs
+
 spring:
   datasource:
     url: jdbc:mysql://120.26.254.82:3306/agent_test?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
@@ -38,3 +42,13 @@ agent:
     max-internal-rounds: 10
     context-rounds: 10
     executor-max-retries: 3
+
+qq-bot:
+  enabled: true
+  app-id: ${QQ_BOT_APP_ID:1904080655}
+  app-secret: ${QQ_BOT_APP_SECRET:y2881qVzJSZgfU7e}
+  websocket-url: ${QQ_BOT_WS_URL:wss://api.sgroup.qq.com/websocket}
+  thread-pool:
+    core-size: 5
+    max-size: 20
+    queue-capacity: 20

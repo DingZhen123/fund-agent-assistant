@@ -8,7 +8,6 @@ import com.fundagent.core.post.Post;
 import com.fundagent.repo.entity.ConversationEntity;
 import com.fundagent.repo.mapper.ConversationMapper;
 import com.fundagent.repo.mapper.PostMapper;
-import com.fundagent.server.config.ConversationSession;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -41,30 +40,10 @@ public class ChatService {
 
     public void sendMessage(String userId, String message, String conversationId, SseEmitter emitter) {
         try {
-            ConversationSession session = sessionService.getSession(userId);
-            boolean isNew = (conversationId == null || conversationId.isEmpty());
-
-            if (session == null || isNew) {
-                String title = message.length() > 20 ? message.substring(0, 20) + "..." : message;
-                ConversationEntity conv = new ConversationEntity();
-                conv.setUserId(userId);
-                conv.setTitle(title);
-                conv.setStatus("active");
-                conv.setMessageCount(0);
-                conversationMapper.insert(conv);
-                conversationId = conv.getId().toString();
-                sessionService.saveSession(userId, conversationId);
-            } else {
-                conversationId = session.getConversationId();
-                sessionService.refreshSession(userId);
-            }
-
-            Long convId = Long.parseLong(conversationId);
-            String cid = conversationId;
-
-            Memory memory = isNew
-                    ? memoryService.getOrCreate(cid)
-                    : memoryService.loadFromHistory(convId);
+            SessionContext ctx = prepareSession(userId, message, conversationId);
+            Memory memory = ctx.isNew
+                    ? memoryService.getOrCreate(ctx.conversationId)
+                    : memoryService.loadFromHistory(ctx.convId);
 
             Consumer<OrchestrationEvent> listener = event -> {
                 try {
@@ -87,23 +66,11 @@ public class ChatService {
             };
 
             OrchestrationResult result = orchestrator.processMessage(memory, message, listener, onToken);
-            log.info("Orchestration done: posts.size={}, answer={}",
-                    result.getAllPosts() != null ? result.getAllPosts().size() : 0,
-                    result.getFinalAnswer());
-
-            int roundNum = memory.getCurrentRound() != null ? memory.getCurrentRound().getRoundNum() : 1;
-            memoryService.savePosts(convId, result.getAllPosts(), roundNum);
-            log.info("Posts saved to DB for conversation {}", convId);
-
-            ConversationEntity conv = conversationMapper.selectById(convId);
-            if (conv != null) {
-                conv.setMessageCount(memory.getAllPosts().size());
-                conversationMapper.updateById(conv);
-            }
+            String finalAnswer = finishOrchestration(ctx, memory, result);
 
             emitter.send(SseEmitter.event()
                     .name("message_end")
-                    .data(new SseEnd(cid, result.getFinalAnswer())));
+                    .data(new SseEnd(ctx.conversationId, finalAnswer)));
             emitter.complete();
 
         } catch (Exception e) {
@@ -115,6 +82,75 @@ public class ChatService {
                 emitter.completeWithError(ex);
             }
         }
+    }
+
+    public String sendSync(String userId, String message) {
+        try {
+            SessionContext ctx = prepareSession(userId, message, null);
+            Memory memory = ctx.isNew
+                    ? memoryService.getOrCreate(ctx.conversationId)
+                    : memoryService.loadFromHistory(ctx.convId);
+
+            OrchestrationResult result = orchestrator.processMessage(memory, message, null, null);
+            return finishOrchestration(ctx, memory, result);
+        } catch (Exception e) {
+            log.error("ChatService sendSync error", e);
+            return "系统繁忙，请稍后重试";
+        }
+    }
+
+    private SessionContext prepareSession(String userId, String message, String conversationId) {
+        boolean explicitConv = (conversationId != null && !conversationId.isEmpty());
+        String sessionId = sessionService.getSession(userId);
+        boolean isNew;
+
+        if (explicitConv) {
+            sessionService.saveSession(userId, conversationId);
+            isNew = true;
+        } else if (sessionId != null) {
+            conversationId = sessionId;
+            sessionService.refreshSession(userId);
+            isNew = false;
+            log.info("使用已有会话: conversationId={}, userId={}", conversationId, userId);
+        } else {
+            String title = message.length() > 20 ? message.substring(0, 20) + "..." : message;
+            ConversationEntity conv = new ConversationEntity();
+            conv.setUserId(userId);
+            conv.setTitle(title);
+            conv.setStatus("active");
+            conv.setMessageCount(0);
+            conversationMapper.insert(conv);
+            conversationId = conv.getId().toString();
+            sessionService.saveSession(userId, conversationId);
+            isNew = true;
+        }
+
+        Long convId = Long.parseLong(conversationId);
+        return new SessionContext(conversationId, convId, isNew);
+    }
+
+    private String finishOrchestration(SessionContext ctx, Memory memory, OrchestrationResult result) {
+        log.info("Orchestration done: posts.size={}, answer={}",
+                result.getAllPosts() != null ? result.getAllPosts().size() : 0,
+                result.getFinalAnswer());
+
+        int roundNum = memory.getCurrentRound() != null ? memory.getCurrentRound().getRoundNum() : 1;
+        memoryService.savePosts(ctx.convId, result.getAllPosts(), roundNum);
+
+        ConversationEntity conv = conversationMapper.selectById(ctx.convId);
+        if (conv != null) {
+            conv.setMessageCount(memory.getAllPosts().size());
+            conversationMapper.updateById(conv);
+        }
+        return result.getFinalAnswer();
+    }
+
+    @Data
+    @AllArgsConstructor
+    private static class SessionContext {
+        private String conversationId;
+        private Long convId;
+        private boolean isNew;
     }
 
     public List<ConversationEntity> getConversations(String userId) {

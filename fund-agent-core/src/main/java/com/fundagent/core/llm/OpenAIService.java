@@ -33,6 +33,7 @@ public class OpenAIService implements LLMService {
         this.httpClient = new OkHttpClient.Builder()
                 .connectTimeout(config.getTimeoutSeconds(), TimeUnit.SECONDS)
                 .readTimeout(config.getTimeoutSeconds() * 2L, TimeUnit.SECONDS)
+                .protocols(java.util.List.of(okhttp3.Protocol.HTTP_1_1))
                 .build();
     }
 
