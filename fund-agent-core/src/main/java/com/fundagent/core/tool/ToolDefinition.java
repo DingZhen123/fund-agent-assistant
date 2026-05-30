@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.lang.reflect.Method;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -16,7 +17,15 @@ import java.util.Map;
 public class ToolDefinition {
     private String name;
     private String description;
+    private String domain;
+    private String version;
+    private String riskLevel;
+    @Builder.Default
+    private boolean enabled = true;
     private List<String> params;
+    private String paramsSchemaJson;
+    @Builder.Default
+    private Map<String, Object> metadata = new HashMap<>();
     private Method method;
 
     public Object invoke(Object instance, Map<String, Object> args) throws Exception {

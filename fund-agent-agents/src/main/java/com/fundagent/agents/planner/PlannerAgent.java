@@ -13,6 +13,7 @@ import com.fundagent.core.plan.Plan;
 import com.fundagent.core.plan.PlanValidationResult;
 import com.fundagent.core.plan.PlanValidator;
 import com.fundagent.core.post.Post;
+import com.fundagent.core.tool.ToolDefinition;
 import com.fundagent.core.tool.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.yaml.snakeyaml.Yaml;
@@ -185,9 +186,23 @@ public class PlannerAgent extends Agent {
 
         JSONObject paramProperties = new JSONObject();
         Set<String> paramNames = new LinkedHashSet<>();
-        toolRegistry.getAllTools().forEach(tool -> paramNames.addAll(tool.getParams()));
+        for (ToolDefinition tool : toolRegistry.getAllTools()) {
+            if (tool.getParamsSchemaJson() != null && !tool.getParamsSchemaJson().isEmpty()) {
+                JSONObject schema = JSON.parseObject(tool.getParamsSchemaJson());
+                JSONObject schemaProperties = schema.getJSONObject("properties");
+                if (schemaProperties != null) {
+                    for (String paramName : schemaProperties.keySet()) {
+                        paramProperties.put(paramName, schemaProperties.getJSONObject(paramName));
+                        paramNames.add(paramName);
+                    }
+                }
+            }
+            paramNames.addAll(tool.getParams());
+        }
         for (String paramName : paramNames) {
-            paramProperties.put(paramName, stringSchema());
+            if (!paramProperties.containsKey(paramName)) {
+                paramProperties.put(paramName, stringSchema());
+            }
         }
         toolParams.put("properties", paramProperties);
         properties.put("tool_params", toolParams);

@@ -1,5 +1,6 @@
 package com.fundagent.server.config;
 
+import com.alibaba.fastjson2.JSON;
 import com.fundagent.agents.executor.ExecutorAgent;
 import com.fundagent.agents.planner.PlannerAgent;
 import com.fundagent.core.agent.AgentEntry;
@@ -16,9 +17,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.yaml.snakeyaml.Yaml;
 
+import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Map;
 
 @Slf4j
@@ -64,16 +68,24 @@ public class AgentAutoConfig {
     @Bean
     public ToolRegistry toolRegistry(ApplicationContext ctx) {
         ToolRegistry registry = new ToolRegistry();
+        Map<String, Map<String, Object>> metadata = loadToolMetadata();
         Map<String, Object> beans = ctx.getBeansWithAnnotation(
                 org.springframework.stereotype.Component.class);
         for (Object bean : beans.values()) {
             for (Method method : bean.getClass().getDeclaredMethods()) {
                 Tool tool = method.getAnnotation(Tool.class);
                 if (tool != null) {
+                    Map<String, Object> toolMetadata = metadata.getOrDefault(tool.name(), Map.of());
                     ToolDefinition def = ToolDefinition.builder()
                             .name(tool.name())
                             .description(tool.description())
+                            .domain(asString(toolMetadata.get("domain")))
+                            .version(asString(toolMetadata.get("version")))
+                            .riskLevel(asString(toolMetadata.get("riskLevel")))
+                            .enabled(asBoolean(toolMetadata.get("enabled"), true))
                             .params(Arrays.asList(tool.params()))
+                            .paramsSchemaJson(toSchemaJson(toolMetadata.get("paramsSchema")))
+                            .metadata(new HashMap<>(toolMetadata))
                             .method(method)
                             .build();
                     registry.register(def, bean);
@@ -82,6 +94,36 @@ public class AgentAutoConfig {
             }
         }
         return registry;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Map<String, Object>> loadToolMetadata() {
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream("tools.yaml")) {
+            if (is == null) {
+                log.info("tools.yaml not found, use @Tool annotation only");
+                return Map.of();
+            }
+            Map<String, Object> root = new Yaml().load(is);
+            Object tools = root != null ? root.get("tools") : null;
+            if (tools instanceof Map<?, ?> map) {
+                return (Map<String, Map<String, Object>>) map;
+            }
+        } catch (Exception e) {
+            log.warn("Failed to load tools.yaml, use @Tool annotation only", e);
+        }
+        return Map.of();
+    }
+
+    private String toSchemaJson(Object schema) {
+        return schema != null ? JSON.toJSONString(schema) : null;
+    }
+
+    private String asString(Object value) {
+        return value != null ? String.valueOf(value) : null;
+    }
+
+    private boolean asBoolean(Object value, boolean defaultValue) {
+        return value != null ? Boolean.parseBoolean(String.valueOf(value)) : defaultValue;
     }
 
     @Bean

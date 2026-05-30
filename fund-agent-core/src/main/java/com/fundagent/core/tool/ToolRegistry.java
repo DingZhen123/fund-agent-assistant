@@ -8,6 +8,7 @@ import java.util.stream.Collectors;
 public class ToolRegistry {
     private final Map<String, ToolDefinition> definitions = new ConcurrentHashMap<>();
     private final Map<String, Object> instances = new ConcurrentHashMap<>();
+    private final ToolSchemaValidator schemaValidator = new ToolSchemaValidator();
 
     public void register(ToolDefinition definition, Object instance) {
         definitions.put(definition.getName(), definition);
@@ -32,6 +33,14 @@ public class ToolRegistry {
         if (instance == null) {
             return ToolResult.error("工具实例未注册: " + toolName);
         }
+        if (!def.isEnabled()) {
+            return ToolResult.error("工具已禁用: " + toolName);
+        }
+
+        ToolParamValidationResult validation = schemaValidator.validate(def, args);
+        if (!validation.isValid()) {
+            return ToolResult.error(validation.getErrorCode() + ": " + validation.getMessage());
+        }
 
         try {
             Object result = def.invoke(instance, args);
@@ -46,7 +55,10 @@ public class ToolRegistry {
 
     public String getToolsDescription() {
         return definitions.values().stream()
+                .filter(ToolDefinition::isEnabled)
                 .map(t -> "- " + t.getName() + ": " + t.getDescription()
+                        + (t.getDomain() != null ? ", domain: " + t.getDomain() : "")
+                        + (t.getRiskLevel() != null ? ", risk: " + t.getRiskLevel() : "")
                         + ", 参数: " + String.join(", ", t.getParams()))
                 .collect(Collectors.joining("\n"));
     }

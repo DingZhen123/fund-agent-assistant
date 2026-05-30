@@ -1,0 +1,34 @@
+tools:
+  queryPaymentDocuments:
+    domain: finance
+    version: v1
+    riskLevel: low
+    enabled: true
+    paramsSchema:
+      type: object
+      required:
+        - noteCode
+      additionalProperties: false
+      properties:
+        noteCode:
+          type: string
+          description: 支付单据号
+          pattern: "^(EC|LA|TR|FP|YFKD).+"
+          example: EC2025
+
+  sendReceiptFiles:
+    domain: finance
+    version: v1
+    riskLevel: medium
+    enabled: true
+    paramsSchema:
+      type: object
+      required:
+        - noteCode
+      additionalProperties: false
+      properties:
+        noteCode:
+          type: string
+          description: 支付单据号
+          pattern: "^(EC|LA|TR|FP|YFKD).+"
+          example: EC2025
