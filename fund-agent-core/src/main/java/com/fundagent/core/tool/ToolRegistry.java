@@ -26,20 +26,20 @@ public class ToolRegistry {
     public ToolResult execute(String toolName, Map<String, Object> args) {
         ToolDefinition def = definitions.get(toolName);
         if (def == null) {
-            return ToolResult.error("未知工具: " + toolName);
+            return ToolResult.unknownTool("未知工具: " + toolName);
         }
 
         Object instance = instances.get(toolName);
         if (instance == null) {
-            return ToolResult.error("工具实例未注册: " + toolName);
+            return ToolResult.systemError("TOOL_INSTANCE_NOT_REGISTERED", "工具实例未注册: " + toolName, false);
         }
         if (!def.isEnabled()) {
-            return ToolResult.error("工具已禁用: " + toolName);
+            return ToolResult.businessError("TOOL_DISABLED", "工具已禁用: " + toolName);
         }
 
         ToolParamValidationResult validation = schemaValidator.validate(def, args);
         if (!validation.isValid()) {
-            return ToolResult.error(validation.getErrorCode() + ": " + validation.getMessage());
+            return ToolResult.validationError(validation.getErrorCode(), validation.getMessage());
         }
 
         try {
@@ -49,7 +49,7 @@ public class ToolRegistry {
             }
             return ToolResult.success(result);
         } catch (Exception e) {
-            return ToolResult.error("工具执行异常: " + e.getMessage());
+            return ToolResult.systemError("TOOL_EXECUTION_EXCEPTION", "工具执行异常: " + e.getMessage(), true);
         }
     }
 

@@ -180,10 +180,6 @@ public class PlannerAgent extends Agent {
         toolName.put("enum", toolNameEnum);
         properties.put("tool_name", toolName);
 
-        JSONObject toolParams = new JSONObject();
-        toolParams.put("type", "object");
-        toolParams.put("additionalProperties", false);
-
         JSONObject paramProperties = new JSONObject();
         Set<String> paramNames = new LinkedHashSet<>();
         for (ToolDefinition tool : toolRegistry.getAllTools()) {
@@ -204,8 +200,7 @@ public class PlannerAgent extends Agent {
                 paramProperties.put(paramName, stringSchema());
             }
         }
-        toolParams.put("properties", paramProperties);
-        properties.put("tool_params", toolParams);
+        properties.put("tool_params", buildToolParamsSchema(paramProperties, paramNames));
 
         JSONObject stop = new JSONObject();
         stop.put("type", "boolean");
@@ -215,6 +210,24 @@ public class PlannerAgent extends Agent {
         root.put("required", List.of("plan_reasoning", "send_to", "message",
                 "tool_name", "tool_params", "stop"));
         return root.toJSONString();
+    }
+
+    private JSONObject buildToolParamsSchema(JSONObject paramProperties, Set<String> paramNames) {
+        JSONObject emptyParams = new JSONObject();
+        emptyParams.put("type", "object");
+        emptyParams.put("additionalProperties", false);
+        emptyParams.put("properties", new JSONObject());
+        emptyParams.put("required", List.of());
+
+        JSONObject paramsWithValues = new JSONObject();
+        paramsWithValues.put("type", "object");
+        paramsWithValues.put("additionalProperties", false);
+        paramsWithValues.put("properties", paramProperties);
+        paramsWithValues.put("required", new ArrayList<>(paramNames));
+
+        JSONObject schema = new JSONObject();
+        schema.put("anyOf", List.of(emptyParams, paramsWithValues));
+        return schema;
     }
 
     private JSONObject stringSchema() {

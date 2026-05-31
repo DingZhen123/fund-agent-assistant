@@ -1,10 +1,20 @@
 package com.fundagent.server.service;
 
+import com.alibaba.fastjson2.JSON;
+import com.fundagent.agents.graph.GraphTaskPlanner;
+import com.fundagent.core.graph.GraphResult;
+import com.fundagent.core.graph.GraphOrchestrator;
+import com.fundagent.core.graph.TaskPlan;
 import com.fundagent.core.memory.Memory;
+import com.fundagent.core.memory.Round;
 import com.fundagent.core.orchestration.OrchestrationEvent;
+import com.fundagent.core.orchestration.OrchestrationEventType;
 import com.fundagent.core.orchestration.OrchestrationResult;
 import com.fundagent.core.orchestration.Orchestrator;
 import com.fundagent.core.post.Post;
+import com.fundagent.core.routing.TaskMode;
+import com.fundagent.core.routing.TaskRouteResult;
+import com.fundagent.core.routing.TaskRouter;
 import com.fundagent.repo.entity.ConversationEntity;
 import com.fundagent.repo.mapper.ConversationMapper;
 import com.fundagent.repo.mapper.PostMapper;
@@ -23,15 +33,23 @@ import java.util.function.Consumer;
 public class ChatService {
 
     private final Orchestrator orchestrator;
+    private final GraphTaskPlanner graphTaskPlanner;
+    private final GraphOrchestrator graphOrchestrator;
+    private final TaskRouter taskRouter;
     private final SessionService sessionService;
     private final MemoryService memoryService;
     private final ConversationMapper conversationMapper;
     private final PostMapper postMapper;
 
-    public ChatService(Orchestrator orchestrator, SessionService sessionService,
+    public ChatService(Orchestrator orchestrator, GraphTaskPlanner graphTaskPlanner,
+                       GraphOrchestrator graphOrchestrator, TaskRouter taskRouter,
+                       SessionService sessionService,
                        MemoryService memoryService, ConversationMapper conversationMapper,
                        PostMapper postMapper) {
         this.orchestrator = orchestrator;
+        this.graphTaskPlanner = graphTaskPlanner;
+        this.graphOrchestrator = graphOrchestrator;
+        this.taskRouter = taskRouter;
         this.sessionService = sessionService;
         this.memoryService = memoryService;
         this.conversationMapper = conversationMapper;
@@ -65,8 +83,7 @@ public class ChatService {
                 }
             };
 
-            OrchestrationResult result = orchestrator.processMessage(memory, message, listener, onToken);
-            String finalAnswer = finishOrchestration(ctx, memory, result);
+            String finalAnswer = processRoutedMessage(ctx, memory, userId, message, listener, onToken);
 
             emitter.send(SseEmitter.event()
                     .name("message_end")
@@ -91,8 +108,7 @@ public class ChatService {
                     ? memoryService.getOrCreate(ctx.conversationId)
                     : memoryService.loadFromHistory(ctx.convId);
 
-            OrchestrationResult result = orchestrator.processMessage(memory, message, null, null);
-            return finishOrchestration(ctx, memory, result);
+            return processRoutedMessage(ctx, memory, userId, message, null, null);
         } catch (Exception e) {
             log.error("ChatService sendSync error", e);
             return "系统繁忙，请稍后重试";
@@ -143,6 +159,69 @@ public class ChatService {
             conversationMapper.updateById(conv);
         }
         return result.getFinalAnswer();
+    }
+
+    private String processRoutedMessage(SessionContext ctx, Memory memory, String userId, String message,
+                                        Consumer<OrchestrationEvent> listener,
+                                        Consumer<String> onToken) {
+        TaskRouteResult route = taskRouter.route(message);
+        log.info("Task route: mode={}, confidence={}, reason={}, rules={}",
+                route.getMode(), route.getConfidence(), route.getReason(), route.getMatchedRules());
+
+        if (TaskMode.COMPLEX.equals(route.getMode())) {
+            return processGraphMessage(ctx, memory, userId, message, route, listener);
+        }
+
+        OrchestrationResult result = orchestrator.processMessage(memory, message, listener, onToken);
+        return finishOrchestration(ctx, memory, result);
+    }
+
+    private String processGraphMessage(SessionContext ctx, Memory memory, String userId, String message,
+                                       TaskRouteResult route,
+                                       Consumer<OrchestrationEvent> listener) {
+        emit(listener, OrchestrationEventType.ROUND_START, "GraphOrchestrator", "开始执行复杂任务...");
+
+        TaskPlan taskPlan = graphTaskPlanner.plan(memory, message);
+        emit(listener, OrchestrationEventType.AGENT_END, "GraphTaskPlanner", "复杂任务计划已生成");
+
+        GraphResult graphResult = graphOrchestrator.execute(taskPlan, userId, ctx.conversationId, message);
+        String finalAnswer = graphResult.getAnswer();
+
+        Round round = memory.newRound(message);
+        Post userPost = Post.create("User", "GraphTaskPlanner", message);
+        userPost.addAttachment("task_route", JSON.toJSONString(route));
+        round.addPost(userPost);
+
+        Post graphPost = Post.create("GraphOrchestrator", "User", finalAnswer);
+        graphPost.addAttachment("task_plan", JSON.toJSONString(taskPlan));
+        graphPost.addAttachment("graph_success", String.valueOf(graphResult.isSuccess()));
+        graphPost.addAttachment("waiting_user_input", String.valueOf(graphResult.isWaitingUserInput()));
+        round.addPost(graphPost);
+        round.markCompleted();
+
+        memoryService.savePosts(ctx.convId, round.getPosts(), round.getRoundNum());
+        updateConversationMessageCount(ctx, memory);
+
+        emit(listener,
+                graphResult.isSuccess() ? OrchestrationEventType.MESSAGE_END : OrchestrationEventType.ERROR,
+                "GraphOrchestrator",
+                finalAnswer);
+        return finalAnswer;
+    }
+
+    private void updateConversationMessageCount(SessionContext ctx, Memory memory) {
+        ConversationEntity conv = conversationMapper.selectById(ctx.convId);
+        if (conv != null) {
+            conv.setMessageCount(memory.getAllPosts().size());
+            conversationMapper.updateById(conv);
+        }
+    }
+
+    private void emit(Consumer<OrchestrationEvent> listener,
+                      OrchestrationEventType type, String agent, String message) {
+        if (listener != null) {
+            listener.accept(new OrchestrationEvent(type, agent, message));
+        }
     }
 
     @Data

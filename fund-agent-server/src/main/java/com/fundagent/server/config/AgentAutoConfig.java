@@ -2,18 +2,24 @@ package com.fundagent.server.config;
 
 import com.alibaba.fastjson2.JSON;
 import com.fundagent.agents.executor.ExecutorAgent;
+import com.fundagent.agents.graph.GraphAnswerGenerator;
+import com.fundagent.agents.graph.GraphTaskPlanner;
 import com.fundagent.agents.planner.PlannerAgent;
 import com.fundagent.core.agent.AgentEntry;
 import com.fundagent.core.agent.AgentRegistry;
 import com.fundagent.core.llm.LLMConfig;
 import com.fundagent.core.llm.LLMService;
 import com.fundagent.core.llm.OpenAIService;
+import com.fundagent.core.graph.GraphOrchestrator;
 import com.fundagent.core.orchestration.Orchestrator;
+import com.fundagent.core.routing.RuleBasedTaskRouter;
+import com.fundagent.core.routing.TaskRouter;
 import com.fundagent.core.tool.Tool;
 import com.fundagent.core.tool.ToolDefinition;
 import com.fundagent.core.tool.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -66,13 +72,16 @@ public class AgentAutoConfig {
     }
 
     @Bean
-    public ToolRegistry toolRegistry(ApplicationContext ctx) {
+    public ToolRegistry toolRegistry(ConfigurableListableBeanFactory beanFactory) {
         ToolRegistry registry = new ToolRegistry();
         Map<String, Map<String, Object>> metadata = loadToolMetadata();
-        Map<String, Object> beans = ctx.getBeansWithAnnotation(
-                org.springframework.stereotype.Component.class);
-        for (Object bean : beans.values()) {
-            for (Method method : bean.getClass().getDeclaredMethods()) {
+        for (String beanName : beanFactory.getBeanDefinitionNames()) {
+            Class<?> beanType = beanFactory.getType(beanName, false);
+            if (beanType == null || !hasToolMethod(beanType)) {
+                continue;
+            }
+            Object bean = beanFactory.getBean(beanName);
+            for (Method method : beanType.getDeclaredMethods()) {
                 Tool tool = method.getAnnotation(Tool.class);
                 if (tool != null) {
                     Map<String, Object> toolMetadata = metadata.getOrDefault(tool.name(), Map.of());
@@ -94,6 +103,15 @@ public class AgentAutoConfig {
             }
         }
         return registry;
+    }
+
+    private boolean hasToolMethod(Class<?> beanType) {
+        for (Method method : beanType.getDeclaredMethods()) {
+            if (method.getAnnotation(Tool.class) != null) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @SuppressWarnings("unchecked")
@@ -127,6 +145,11 @@ public class AgentAutoConfig {
     }
 
     @Bean
+    public TaskRouter taskRouter() {
+        return new RuleBasedTaskRouter();
+    }
+
+    @Bean
     public AgentRegistry agentRegistry() {
         return new AgentRegistry();
     }
@@ -134,6 +157,23 @@ public class AgentAutoConfig {
     @Bean
     public Orchestrator orchestrator(AgentRegistry registry) {
         return new Orchestrator(registry, maxInternalRounds);
+    }
+
+    @Bean
+    public GraphOrchestrator graphOrchestrator(ToolRegistry toolRegistry, GraphAnswerGenerator graphAnswerGenerator) {
+        GraphOrchestrator graphOrchestrator = new GraphOrchestrator(toolRegistry);
+        graphOrchestrator.setAnswerGenerator(graphAnswerGenerator::generate);
+        return graphOrchestrator;
+    }
+
+    @Bean
+    public GraphTaskPlanner graphTaskPlanner(LLMService llmService, ToolRegistry toolRegistry) {
+        return new GraphTaskPlanner(llmService, toolRegistry, contextRounds);
+    }
+
+    @Bean
+    public GraphAnswerGenerator graphAnswerGenerator(LLMService llmService) {
+        return new GraphAnswerGenerator(llmService);
     }
 
     @Bean
