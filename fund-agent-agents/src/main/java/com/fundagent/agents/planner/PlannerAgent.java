@@ -9,6 +9,9 @@ import com.fundagent.core.agent.AgentDefinition;
 import com.fundagent.core.agent.AgentEntry;
 import com.fundagent.core.agent.AgentRegistry;
 import com.fundagent.core.memory.Memory;
+import com.fundagent.core.memory.MemoryAssembler;
+import com.fundagent.core.memory.MemoryContext;
+import com.fundagent.core.memory.MemoryUseCase;
 import com.fundagent.core.plan.Plan;
 import com.fundagent.core.plan.PlanValidationResult;
 import com.fundagent.core.plan.PlanValidator;
@@ -32,15 +35,15 @@ public class PlannerAgent extends Agent {
     private final String systemPrompt;
     private final String planSchema;
     private final PlanValidator planValidator;
-    private final int contextRounds;
+    private final MemoryAssembler memoryAssembler;
 
     public PlannerAgent(AgentEntry entry, AgentRegistry agentRegistry,
-                        ToolRegistry toolRegistry, int contextRounds) {
+                        ToolRegistry toolRegistry, MemoryAssembler memoryAssembler) {
         super(entry);
         this.systemPrompt = loadPrompt(agentRegistry, toolRegistry);
         this.planSchema = buildPlanSchema(toolRegistry);
         this.planValidator = new PlanValidator(toolRegistry);
-        this.contextRounds = contextRounds;
+        this.memoryAssembler = memoryAssembler;
     }
 
     private String loadPrompt(AgentRegistry agentRegistry, ToolRegistry toolRegistry) {
@@ -95,7 +98,9 @@ public class PlannerAgent extends Agent {
 
     @Override
     public Post reply(Memory memory, Post incoming, Consumer<String> onToken) {
-        String context = memory.toPromptContext(contextRounds);
+        MemoryContext memoryContext = memoryAssembler.assemble(
+                memory, incoming.getMessage(), MemoryUseCase.SIMPLE_PLANNER);
+        String context = memoryContext.toPromptText();
 
         List<Message> history = new ArrayList<>();
         if (!context.isEmpty()) {

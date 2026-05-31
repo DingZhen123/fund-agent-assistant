@@ -1,6 +1,7 @@
 package com.fundagent.core.memory;
 
 import java.util.Map;
+import java.util.HashMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class SharedMemory {
@@ -13,6 +14,10 @@ public class SharedMemory {
     @SuppressWarnings("unchecked")
     public <T> T get(String key) {
         return (T) store.get(key);
+    }
+
+    public Map<String, Object> snapshot() {
+        return new HashMap<>(store);
     }
 
     public void clear() {

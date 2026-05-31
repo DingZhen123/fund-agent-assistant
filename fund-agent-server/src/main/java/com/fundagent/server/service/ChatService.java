@@ -38,13 +38,17 @@ public class ChatService {
     private final TaskRouter taskRouter;
     private final SessionService sessionService;
     private final MemoryService memoryService;
+    private final EntityMemoryService entityMemoryService;
+    private final ConversationSummaryService conversationSummaryService;
     private final ConversationMapper conversationMapper;
     private final PostMapper postMapper;
 
     public ChatService(Orchestrator orchestrator, GraphTaskPlanner graphTaskPlanner,
                        GraphOrchestrator graphOrchestrator, TaskRouter taskRouter,
                        SessionService sessionService,
-                       MemoryService memoryService, ConversationMapper conversationMapper,
+                       MemoryService memoryService, EntityMemoryService entityMemoryService,
+                       ConversationSummaryService conversationSummaryService,
+                       ConversationMapper conversationMapper,
                        PostMapper postMapper) {
         this.orchestrator = orchestrator;
         this.graphTaskPlanner = graphTaskPlanner;
@@ -52,6 +56,8 @@ public class ChatService {
         this.taskRouter = taskRouter;
         this.sessionService = sessionService;
         this.memoryService = memoryService;
+        this.entityMemoryService = entityMemoryService;
+        this.conversationSummaryService = conversationSummaryService;
         this.conversationMapper = conversationMapper;
         this.postMapper = postMapper;
     }
@@ -150,6 +156,10 @@ public class ChatService {
                 result.getAllPosts() != null ? result.getAllPosts().size() : 0,
                 result.getFinalAnswer());
 
+        if (result.getAllPosts() != null) {
+            result.getAllPosts().forEach(post -> entityMemoryService.rememberToolResultPost(memory, post));
+        }
+
         int roundNum = memory.getCurrentRound() != null ? memory.getCurrentRound().getRoundNum() : 1;
         memoryService.savePosts(ctx.convId, result.getAllPosts(), roundNum);
 
@@ -158,6 +168,7 @@ public class ChatService {
             conv.setMessageCount(memory.getAllPosts().size());
             conversationMapper.updateById(conv);
         }
+        conversationSummaryService.refreshSummaryIfNeeded(ctx.convId, memory);
         return result.getFinalAnswer();
     }
 
@@ -187,6 +198,11 @@ public class ChatService {
         GraphResult graphResult = graphOrchestrator.execute(taskPlan, userId, ctx.conversationId, message);
         String finalAnswer = graphResult.getAnswer();
 
+        if (graphResult.getState() != null && graphResult.getState().getObservations() != null) {
+            graphResult.getState().getObservations().values()
+                    .forEach(observation -> entityMemoryService.rememberObservation(memory, observation));
+        }
+
         Round round = memory.newRound(message);
         Post userPost = Post.create("User", "GraphTaskPlanner", message);
         userPost.addAttachment("task_route", JSON.toJSONString(route));
@@ -201,6 +217,7 @@ public class ChatService {
 
         memoryService.savePosts(ctx.convId, round.getPosts(), round.getRoundNum());
         updateConversationMessageCount(ctx, memory);
+        conversationSummaryService.refreshSummaryIfNeeded(ctx.convId, memory);
 
         emit(listener,
                 graphResult.isSuccess() ? OrchestrationEventType.MESSAGE_END : OrchestrationEventType.ERROR,

@@ -22,10 +22,13 @@ public class MemoryService {
     private final Map<String, Memory> cache = new ConcurrentHashMap<>();
     private final PostMapper postMapper;
     private final ConversationMapper conversationMapper;
+    private final ConversationSummaryService conversationSummaryService;
 
-    public MemoryService(PostMapper postMapper, ConversationMapper conversationMapper) {
+    public MemoryService(PostMapper postMapper, ConversationMapper conversationMapper,
+                         ConversationSummaryService conversationSummaryService) {
         this.postMapper = postMapper;
         this.conversationMapper = conversationMapper;
+        this.conversationSummaryService = conversationSummaryService;
     }
 
     public Memory getOrCreate(String conversationId) {
@@ -38,6 +41,7 @@ public class MemoryService {
 
         List<PostEntity> entities = postMapper.findByConversationId(conversationId);
         Memory memory = new Memory(key);
+        memory.setCompressedSummary(conversationSummaryService.getSummary(conversationId));
 
         if (!entities.isEmpty()) {
             Map<Integer, List<PostEntity>> roundMap = entities.stream()

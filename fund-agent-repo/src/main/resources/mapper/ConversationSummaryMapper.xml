@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.fundagent.repo.mapper.ConversationSummaryMapper">
+
+    <select id="findByConversationId" resultType="com.fundagent.repo.entity.ConversationSummaryEntity">
+        SELECT id, conversation_id, summary, covered_round_num, version, created_at, updated_at
+        FROM conversation_summaries
+        WHERE conversation_id = #{conversationId}
+        LIMIT 1
+    </select>
+
+    <update id="updateByConversationId">
+        UPDATE conversation_summaries
+        SET summary = #{summary},
+            covered_round_num = #{coveredRoundNum},
+            version = #{version},
+            updated_at = NOW()
+        WHERE conversation_id = #{conversationId}
+    </update>
+
+</mapper>

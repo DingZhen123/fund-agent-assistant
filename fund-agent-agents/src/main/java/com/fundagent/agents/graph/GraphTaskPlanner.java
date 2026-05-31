@@ -7,6 +7,9 @@ import com.fundagent.common.model.Message;
 import com.fundagent.core.graph.TaskPlan;
 import com.fundagent.core.llm.LLMService;
 import com.fundagent.core.memory.Memory;
+import com.fundagent.core.memory.MemoryAssembler;
+import com.fundagent.core.memory.MemoryContext;
+import com.fundagent.core.memory.MemoryUseCase;
 import com.fundagent.core.tool.ToolDefinition;
 import com.fundagent.core.tool.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
@@ -20,21 +23,22 @@ import java.util.Set;
 public class GraphTaskPlanner {
     private final LLMService llmService;
     private final ToolRegistry toolRegistry;
-    private final int contextRounds;
+    private final MemoryAssembler memoryAssembler;
     private final String systemPrompt;
     private final String taskPlanSchema;
 
-    public GraphTaskPlanner(LLMService llmService, ToolRegistry toolRegistry, int contextRounds) {
+    public GraphTaskPlanner(LLMService llmService, ToolRegistry toolRegistry, MemoryAssembler memoryAssembler) {
         this.llmService = llmService;
         this.toolRegistry = toolRegistry;
-        this.contextRounds = contextRounds;
+        this.memoryAssembler = memoryAssembler;
         this.systemPrompt = buildSystemPrompt(toolRegistry);
         this.taskPlanSchema = buildTaskPlanSchema(toolRegistry);
     }
 
     public TaskPlan plan(Memory memory, String userMessage) {
         List<Message> history = new ArrayList<>();
-        String context = memory != null ? memory.toPromptContext(contextRounds) : "";
+        MemoryContext memoryContext = memoryAssembler.assemble(memory, userMessage, MemoryUseCase.GRAPH_PLANNER);
+        String context = memoryContext.toPromptText();
         if (context != null && !context.isEmpty()) {
             history.add(new Message("user", "[当前会话上下文]\n" + context));
         }

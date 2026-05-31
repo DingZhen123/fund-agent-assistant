@@ -11,6 +11,8 @@ import com.fundagent.core.llm.LLMConfig;
 import com.fundagent.core.llm.LLMService;
 import com.fundagent.core.llm.OpenAIService;
 import com.fundagent.core.graph.GraphOrchestrator;
+import com.fundagent.core.memory.DefaultMemoryAssembler;
+import com.fundagent.core.memory.MemoryAssembler;
 import com.fundagent.core.orchestration.Orchestrator;
 import com.fundagent.core.routing.RuleBasedTaskRouter;
 import com.fundagent.core.routing.TaskRouter;
@@ -150,6 +152,11 @@ public class AgentAutoConfig {
     }
 
     @Bean
+    public MemoryAssembler memoryAssembler() {
+        return new DefaultMemoryAssembler(contextRounds);
+    }
+
+    @Bean
     public AgentRegistry agentRegistry() {
         return new AgentRegistry();
     }
@@ -167,8 +174,9 @@ public class AgentAutoConfig {
     }
 
     @Bean
-    public GraphTaskPlanner graphTaskPlanner(LLMService llmService, ToolRegistry toolRegistry) {
-        return new GraphTaskPlanner(llmService, toolRegistry, contextRounds);
+    public GraphTaskPlanner graphTaskPlanner(LLMService llmService, ToolRegistry toolRegistry,
+                                             MemoryAssembler memoryAssembler) {
+        return new GraphTaskPlanner(llmService, toolRegistry, memoryAssembler);
     }
 
     @Bean
@@ -187,8 +195,9 @@ public class AgentAutoConfig {
     }
 
     @Bean
-    public PlannerAgent plannerAgent(AgentRegistry registry, ToolRegistry toolRegistry) {
-        PlannerAgent agent = new PlannerAgent(plannerEntry(), registry, toolRegistry, contextRounds);
+    public PlannerAgent plannerAgent(AgentRegistry registry, ToolRegistry toolRegistry,
+                                     MemoryAssembler memoryAssembler) {
+        PlannerAgent agent = new PlannerAgent(plannerEntry(), registry, toolRegistry, memoryAssembler);
         agent.setLlmService(llmService());
         return agent;
     }
