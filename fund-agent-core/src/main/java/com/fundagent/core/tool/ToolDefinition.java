@@ -20,6 +20,10 @@ public class ToolDefinition {
     private String domain;
     private String version;
     private String riskLevel;
+    private List<String> intents;
+    private String providerType;
+    private boolean requiresAuth;
+    private boolean requiresConfirmation;
     @Builder.Default
     private boolean enabled = true;
     private List<String> params;

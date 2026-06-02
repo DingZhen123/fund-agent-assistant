@@ -3,6 +3,11 @@ tools:
     domain: finance
     version: v1
     riskLevel: low
+    intents:
+      - query
+    providerType: LOCAL
+    requiresAuth: true
+    requiresConfirmation: false
     enabled: true
     paramsSchema:
       type: object
@@ -20,6 +25,12 @@ tools:
     domain: finance
     version: v1
     riskLevel: medium
+    intents:
+      - send
+      - download
+    providerType: LOCAL
+    requiresAuth: true
+    requiresConfirmation: true
     enabled: true
     paramsSchema:
       type: object

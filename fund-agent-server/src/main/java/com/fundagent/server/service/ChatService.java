@@ -15,6 +15,9 @@ import com.fundagent.core.post.Post;
 import com.fundagent.core.routing.TaskMode;
 import com.fundagent.core.routing.TaskRouteResult;
 import com.fundagent.core.routing.TaskRouter;
+import com.fundagent.core.tool.selection.ToolSelectionRequest;
+import com.fundagent.core.tool.selection.ToolSelectionResult;
+import com.fundagent.core.tool.selection.ToolSelector;
 import com.fundagent.repo.entity.ConversationEntity;
 import com.fundagent.repo.mapper.ConversationMapper;
 import com.fundagent.repo.mapper.PostMapper;
@@ -36,6 +39,7 @@ public class ChatService {
     private final GraphTaskPlanner graphTaskPlanner;
     private final GraphOrchestrator graphOrchestrator;
     private final TaskRouter taskRouter;
+    private final ToolSelector toolSelector;
     private final SessionService sessionService;
     private final MemoryService memoryService;
     private final EntityMemoryService entityMemoryService;
@@ -44,7 +48,7 @@ public class ChatService {
     private final PostMapper postMapper;
 
     public ChatService(Orchestrator orchestrator, GraphTaskPlanner graphTaskPlanner,
-                       GraphOrchestrator graphOrchestrator, TaskRouter taskRouter,
+                       GraphOrchestrator graphOrchestrator, TaskRouter taskRouter, ToolSelector toolSelector,
                        SessionService sessionService,
                        MemoryService memoryService, EntityMemoryService entityMemoryService,
                        ConversationSummaryService conversationSummaryService,
@@ -54,6 +58,7 @@ public class ChatService {
         this.graphTaskPlanner = graphTaskPlanner;
         this.graphOrchestrator = graphOrchestrator;
         this.taskRouter = taskRouter;
+        this.toolSelector = toolSelector;
         this.sessionService = sessionService;
         this.memoryService = memoryService;
         this.entityMemoryService = entityMemoryService;
@@ -192,6 +197,10 @@ public class ChatService {
                                        Consumer<OrchestrationEvent> listener) {
         emit(listener, OrchestrationEventType.ROUND_START, "GraphOrchestrator", "开始执行复杂任务...");
 
+        ToolSelectionResult toolSelection = selectTools(userId, ctx.conversationId, message);
+        emit(listener, OrchestrationEventType.AGENT_END, "ToolSelector",
+                "候选工具已筛选: " + String.join(", ", toolSelection.getCandidateToolNames()));
+
         TaskPlan taskPlan = graphTaskPlanner.plan(memory, message);
         emit(listener, OrchestrationEventType.AGENT_END, "GraphTaskPlanner", "复杂任务计划已生成");
 
@@ -206,6 +215,7 @@ public class ChatService {
         Round round = memory.newRound(message);
         Post userPost = Post.create("User", "GraphTaskPlanner", message);
         userPost.addAttachment("task_route", JSON.toJSONString(route));
+        userPost.addAttachment("tool_selection", JSON.toJSONString(toolSelection));
         round.addPost(userPost);
 
         Post graphPost = Post.create("GraphOrchestrator", "User", finalAnswer);
@@ -224,6 +234,22 @@ public class ChatService {
                 "GraphOrchestrator",
                 finalAnswer);
         return finalAnswer;
+    }
+
+    private ToolSelectionResult selectTools(String userId, String conversationId, String message) {
+        ToolSelectionResult selection = toolSelector.select(ToolSelectionRequest.builder()
+                .userMessage(message)
+                .userId(userId)
+                .conversationId(conversationId)
+                .maxCandidates(10)
+                .build());
+        log.info("Tool selection: domain={}, intents={}, candidates={}, confidence={}, rules={}",
+                selection.getDomain(),
+                selection.getIntents(),
+                selection.getCandidateToolNames(),
+                selection.getConfidence(),
+                selection.getMatchedRules());
+        return selection;
     }
 
     private void updateConversationMessageCount(SessionContext ctx, Memory memory) {

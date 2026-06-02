@@ -1,6 +1,5 @@
 package com.fundagent.server.config;
 
-import com.alibaba.fastjson2.JSON;
 import com.fundagent.agents.executor.ExecutorAgent;
 import com.fundagent.agents.graph.GraphAnswerGenerator;
 import com.fundagent.agents.graph.GraphTaskPlanner;
@@ -16,22 +15,19 @@ import com.fundagent.core.memory.MemoryAssembler;
 import com.fundagent.core.orchestration.Orchestrator;
 import com.fundagent.core.routing.RuleBasedTaskRouter;
 import com.fundagent.core.routing.TaskRouter;
-import com.fundagent.core.tool.Tool;
-import com.fundagent.core.tool.ToolDefinition;
 import com.fundagent.core.tool.ToolRegistry;
+import com.fundagent.core.tool.catalog.ToolCatalog;
+import com.fundagent.core.tool.catalog.ToolCatalogProvider;
+import com.fundagent.core.tool.provider.ToolProvider;
+import com.fundagent.core.tool.selection.DefaultToolSelector;
+import com.fundagent.core.tool.selection.ToolSelectionStage;
+import com.fundagent.core.tool.selection.ToolSelector;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
-import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.yaml.snakeyaml.Yaml;
 
-import java.io.InputStream;
-import java.lang.reflect.Method;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.List;
 
 @Slf4j
 @Configuration
@@ -74,76 +70,22 @@ public class AgentAutoConfig {
     }
 
     @Bean
-    public ToolRegistry toolRegistry(ConfigurableListableBeanFactory beanFactory) {
-        ToolRegistry registry = new ToolRegistry();
-        Map<String, Map<String, Object>> metadata = loadToolMetadata();
-        for (String beanName : beanFactory.getBeanDefinitionNames()) {
-            Class<?> beanType = beanFactory.getType(beanName, false);
-            if (beanType == null || !hasToolMethod(beanType)) {
-                continue;
-            }
-            Object bean = beanFactory.getBean(beanName);
-            for (Method method : beanType.getDeclaredMethods()) {
-                Tool tool = method.getAnnotation(Tool.class);
-                if (tool != null) {
-                    Map<String, Object> toolMetadata = metadata.getOrDefault(tool.name(), Map.of());
-                    ToolDefinition def = ToolDefinition.builder()
-                            .name(tool.name())
-                            .description(tool.description())
-                            .domain(asString(toolMetadata.get("domain")))
-                            .version(asString(toolMetadata.get("version")))
-                            .riskLevel(asString(toolMetadata.get("riskLevel")))
-                            .enabled(asBoolean(toolMetadata.get("enabled"), true))
-                            .params(Arrays.asList(tool.params()))
-                            .paramsSchemaJson(toSchemaJson(toolMetadata.get("paramsSchema")))
-                            .metadata(new HashMap<>(toolMetadata))
-                            .method(method)
-                            .build();
-                    registry.register(def, bean);
-                    log.info("Registered tool: {}", tool.name());
-                }
-            }
-        }
-        return registry;
+    public ToolRegistry toolRegistry(List<ToolProvider> providers) {
+        log.info("ToolRegistry initialized: providers={}", providers.size());
+        return new ToolRegistry(providers);
     }
 
-    private boolean hasToolMethod(Class<?> beanType) {
-        for (Method method : beanType.getDeclaredMethods()) {
-            if (method.getAnnotation(Tool.class) != null) {
-                return true;
-            }
-        }
-        return false;
+    @Bean
+    public ToolCatalog toolCatalog(List<ToolCatalogProvider> providers) {
+        ToolCatalog catalog = ToolCatalog.fromProviders(providers);
+        log.info("ToolCatalog initialized: tools={}", catalog.getAllTools().size());
+        return catalog;
     }
 
-    @SuppressWarnings("unchecked")
-    private Map<String, Map<String, Object>> loadToolMetadata() {
-        try (InputStream is = getClass().getClassLoader().getResourceAsStream("tools.yaml")) {
-            if (is == null) {
-                log.info("tools.yaml not found, use @Tool annotation only");
-                return Map.of();
-            }
-            Map<String, Object> root = new Yaml().load(is);
-            Object tools = root != null ? root.get("tools") : null;
-            if (tools instanceof Map<?, ?> map) {
-                return (Map<String, Map<String, Object>>) map;
-            }
-        } catch (Exception e) {
-            log.warn("Failed to load tools.yaml, use @Tool annotation only", e);
-        }
-        return Map.of();
-    }
-
-    private String toSchemaJson(Object schema) {
-        return schema != null ? JSON.toJSONString(schema) : null;
-    }
-
-    private String asString(Object value) {
-        return value != null ? String.valueOf(value) : null;
-    }
-
-    private boolean asBoolean(Object value, boolean defaultValue) {
-        return value != null ? Boolean.parseBoolean(String.valueOf(value)) : defaultValue;
+    @Bean
+    public ToolSelector toolSelector(List<ToolSelectionStage> stages) {
+        log.info("ToolSelector initialized: stages={}", stages.size());
+        return new DefaultToolSelector(stages);
     }
 
     @Bean
