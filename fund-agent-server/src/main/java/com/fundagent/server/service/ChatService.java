@@ -15,6 +15,8 @@ import com.fundagent.core.post.Post;
 import com.fundagent.core.routing.TaskMode;
 import com.fundagent.core.routing.TaskRouteResult;
 import com.fundagent.core.routing.TaskRouter;
+import com.fundagent.core.tool.ToolDefinition;
+import com.fundagent.core.tool.schema.ToolSchemaResolver;
 import com.fundagent.core.tool.selection.ToolSelectionRequest;
 import com.fundagent.core.tool.selection.ToolSelectionResult;
 import com.fundagent.core.tool.selection.ToolSelector;
@@ -40,6 +42,7 @@ public class ChatService {
     private final GraphOrchestrator graphOrchestrator;
     private final TaskRouter taskRouter;
     private final ToolSelector toolSelector;
+    private final ToolSchemaResolver toolSchemaResolver;
     private final SessionService sessionService;
     private final MemoryService memoryService;
     private final EntityMemoryService entityMemoryService;
@@ -49,6 +52,7 @@ public class ChatService {
 
     public ChatService(Orchestrator orchestrator, GraphTaskPlanner graphTaskPlanner,
                        GraphOrchestrator graphOrchestrator, TaskRouter taskRouter, ToolSelector toolSelector,
+                       ToolSchemaResolver toolSchemaResolver,
                        SessionService sessionService,
                        MemoryService memoryService, EntityMemoryService entityMemoryService,
                        ConversationSummaryService conversationSummaryService,
@@ -59,6 +63,7 @@ public class ChatService {
         this.graphOrchestrator = graphOrchestrator;
         this.taskRouter = taskRouter;
         this.toolSelector = toolSelector;
+        this.toolSchemaResolver = toolSchemaResolver;
         this.sessionService = sessionService;
         this.memoryService = memoryService;
         this.entityMemoryService = entityMemoryService;
@@ -201,7 +206,11 @@ public class ChatService {
         emit(listener, OrchestrationEventType.AGENT_END, "ToolSelector",
                 "候选工具已筛选: " + String.join(", ", toolSelection.getCandidateToolNames()));
 
-        TaskPlan taskPlan = graphTaskPlanner.plan(memory, message);
+        List<ToolDefinition> candidateTools = toolSchemaResolver.resolve(toolSelection.getCandidateToolNames());
+        log.info("Candidate tool definitions resolved: names={}",
+                candidateTools.stream().map(ToolDefinition::getName).toList());
+
+        TaskPlan taskPlan = graphTaskPlanner.plan(memory, message, candidateTools);
         emit(listener, OrchestrationEventType.AGENT_END, "GraphTaskPlanner", "复杂任务计划已生成");
 
         GraphResult graphResult = graphOrchestrator.execute(taskPlan, userId, ctx.conversationId, message);
@@ -220,6 +229,8 @@ public class ChatService {
 
         Post graphPost = Post.create("GraphOrchestrator", "User", finalAnswer);
         graphPost.addAttachment("task_plan", JSON.toJSONString(taskPlan));
+        graphPost.addAttachment("candidate_tools",
+                JSON.toJSONString(candidateTools.stream().map(ToolDefinition::getName).toList()));
         graphPost.addAttachment("graph_success", String.valueOf(graphResult.isSuccess()));
         graphPost.addAttachment("waiting_user_input", String.valueOf(graphResult.isWaitingUserInput()));
         round.addPost(graphPost);

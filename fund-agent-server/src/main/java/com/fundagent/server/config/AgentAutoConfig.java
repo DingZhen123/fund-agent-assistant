@@ -19,6 +19,7 @@ import com.fundagent.core.tool.ToolRegistry;
 import com.fundagent.core.tool.catalog.ToolCatalog;
 import com.fundagent.core.tool.catalog.ToolCatalogProvider;
 import com.fundagent.core.tool.provider.ToolProvider;
+import com.fundagent.core.tool.schema.ToolSchemaResolver;
 import com.fundagent.core.tool.selection.DefaultToolSelector;
 import com.fundagent.core.tool.selection.ToolSelectionStage;
 import com.fundagent.core.tool.selection.ToolSelector;
@@ -86,6 +87,11 @@ public class AgentAutoConfig {
     public ToolSelector toolSelector(List<ToolSelectionStage> stages) {
         log.info("ToolSelector initialized: stages={}", stages.size());
         return new DefaultToolSelector(stages);
+    }
+
+    @Bean
+    public ToolSchemaResolver toolSchemaResolver(ToolRegistry toolRegistry) {
+        return new ToolSchemaResolver(toolRegistry);
     }
 
     @Bean
