@@ -1,7 +1,9 @@
 package com.fundagent.server.service;
 
 import com.alibaba.fastjson2.JSON;
+import com.fundagent.agents.dag.CapabilityDagPlanner;
 import com.fundagent.agents.graph.GraphTaskPlanner;
+import com.fundagent.core.dag.DagPlan;
 import com.fundagent.core.graph.GraphResult;
 import com.fundagent.core.graph.GraphOrchestrator;
 import com.fundagent.core.graph.TaskPlan;
@@ -38,6 +40,7 @@ import java.util.function.Consumer;
 public class ChatService {
 
     private final Orchestrator orchestrator;
+    private final CapabilityDagPlanner capabilityDagPlanner;
     private final GraphTaskPlanner graphTaskPlanner;
     private final GraphOrchestrator graphOrchestrator;
     private final TaskRouter taskRouter;
@@ -50,7 +53,8 @@ public class ChatService {
     private final ConversationMapper conversationMapper;
     private final PostMapper postMapper;
 
-    public ChatService(Orchestrator orchestrator, GraphTaskPlanner graphTaskPlanner,
+    public ChatService(Orchestrator orchestrator, CapabilityDagPlanner capabilityDagPlanner,
+                       GraphTaskPlanner graphTaskPlanner,
                        GraphOrchestrator graphOrchestrator, TaskRouter taskRouter, ToolSelector toolSelector,
                        ToolSchemaResolver toolSchemaResolver,
                        SessionService sessionService,
@@ -59,6 +63,7 @@ public class ChatService {
                        ConversationMapper conversationMapper,
                        PostMapper postMapper) {
         this.orchestrator = orchestrator;
+        this.capabilityDagPlanner = capabilityDagPlanner;
         this.graphTaskPlanner = graphTaskPlanner;
         this.graphOrchestrator = graphOrchestrator;
         this.taskRouter = taskRouter;
@@ -202,6 +207,10 @@ public class ChatService {
                                        Consumer<OrchestrationEvent> listener) {
         emit(listener, OrchestrationEventType.ROUND_START, "GraphOrchestrator", "开始执行复杂任务...");
 
+        DagPlan capabilityDag = capabilityDagPlanner.plan(memory, message);
+        log.info("Capability DAG planned: {}", JSON.toJSONString(capabilityDag));
+        emit(listener, OrchestrationEventType.AGENT_END, "CapabilityDagPlanner", "能力DAG已生成");
+
         ToolSelectionResult toolSelection = selectTools(userId, ctx.conversationId, message);
         emit(listener, OrchestrationEventType.AGENT_END, "ToolSelector",
                 "候选工具已筛选: " + String.join(", ", toolSelection.getCandidateToolNames()));
@@ -225,6 +234,7 @@ public class ChatService {
         Post userPost = Post.create("User", "GraphTaskPlanner", message);
         userPost.addAttachment("task_route", JSON.toJSONString(route));
         userPost.addAttachment("tool_selection", JSON.toJSONString(toolSelection));
+        userPost.addAttachment("capability_dag", JSON.toJSONString(capabilityDag));
         round.addPost(userPost);
 
         Post graphPost = Post.create("GraphOrchestrator", "User", finalAnswer);

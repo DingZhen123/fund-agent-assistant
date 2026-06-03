@@ -1,11 +1,15 @@
 package com.fundagent.server.config;
 
 import com.fundagent.agents.executor.ExecutorAgent;
+import com.fundagent.agents.dag.CapabilityDagPlanner;
 import com.fundagent.agents.graph.GraphAnswerGenerator;
 import com.fundagent.agents.graph.GraphTaskPlanner;
 import com.fundagent.agents.planner.PlannerAgent;
 import com.fundagent.core.agent.AgentEntry;
 import com.fundagent.core.agent.AgentRegistry;
+import com.fundagent.core.capability.CapabilityCatalog;
+import com.fundagent.core.capability.CapabilityCatalogProvider;
+import com.fundagent.core.capability.CapabilityValidator;
 import com.fundagent.core.llm.LLMConfig;
 import com.fundagent.core.llm.LLMService;
 import com.fundagent.core.llm.OpenAIService;
@@ -95,6 +99,18 @@ public class AgentAutoConfig {
     }
 
     @Bean
+    public CapabilityCatalog capabilityCatalog(List<CapabilityCatalogProvider> providers) {
+        CapabilityCatalog catalog = CapabilityCatalog.fromProviders(providers);
+        log.info("CapabilityCatalog initialized: capabilities={}", catalog.getAllCapabilities().size());
+        return catalog;
+    }
+
+    @Bean
+    public CapabilityValidator capabilityValidator(CapabilityCatalog capabilityCatalog) {
+        return new CapabilityValidator(capabilityCatalog);
+    }
+
+    @Bean
     public TaskRouter taskRouter() {
         return new RuleBasedTaskRouter();
     }
@@ -125,6 +141,12 @@ public class AgentAutoConfig {
     public GraphTaskPlanner graphTaskPlanner(LLMService llmService, ToolRegistry toolRegistry,
                                              MemoryAssembler memoryAssembler) {
         return new GraphTaskPlanner(llmService, toolRegistry, memoryAssembler);
+    }
+
+    @Bean
+    public CapabilityDagPlanner capabilityDagPlanner(LLMService llmService, CapabilityCatalog capabilityCatalog,
+                                                     MemoryAssembler memoryAssembler) {
+        return new CapabilityDagPlanner(llmService, capabilityCatalog, memoryAssembler);
     }
 
     @Bean

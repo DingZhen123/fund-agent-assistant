@@ -1,0 +1,50 @@
+capabilities:
+  finance.payment.query:
+    nodeType: QUERY
+    domain: finance
+    intents:
+      - query
+    description: 查询付款状态、付款金额、收付款方、付款时间和回单可用性
+    bindableTools:
+      - queryPaymentDocuments
+    enabled: true
+
+  finance.receipt.send:
+    nodeType: ACTION
+    domain: finance
+    intents:
+      - send
+      - download
+    description: 发送或下载付款回单文件
+    bindableTools:
+      - sendReceiptFiles
+    enabled: true
+
+  reason.general:
+    nodeType: LLM_REASON
+    domain: general
+    intents:
+      - reason
+      - analyze
+      - summarize
+    description: 不调用外部工具，基于已有上下文和Observation生成结构化中间分析结果
+    bindableTools: []
+    enabled: true
+
+  conversation.answer:
+    nodeType: FINAL_ANSWER
+    domain: general
+    intents:
+      - answer
+    description: 根据已有上下文、节点执行结果和验证结论生成最终用户回复
+    bindableTools: []
+    enabled: true
+
+  user.ask_clarification:
+    nodeType: ASK_USER
+    domain: general
+    intents:
+      - ask
+    description: 缺少必要信息时向用户追问
+    bindableTools: []
+    enabled: true
