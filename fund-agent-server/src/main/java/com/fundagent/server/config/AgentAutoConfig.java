@@ -2,6 +2,8 @@ package com.fundagent.server.config;
 
 import com.fundagent.agents.executor.ExecutorAgent;
 import com.fundagent.agents.dag.CapabilityDagPlanner;
+import com.fundagent.agents.dag.CapabilityPlanningContextProvider;
+import com.fundagent.agents.dag.DagPlanSchemaBuilder;
 import com.fundagent.agents.graph.GraphAnswerGenerator;
 import com.fundagent.agents.graph.GraphTaskPlanner;
 import com.fundagent.agents.planner.PlannerAgent;
@@ -10,6 +12,7 @@ import com.fundagent.core.agent.AgentRegistry;
 import com.fundagent.core.capability.CapabilityCatalog;
 import com.fundagent.core.capability.CapabilityCatalogProvider;
 import com.fundagent.core.capability.CapabilityValidator;
+import com.fundagent.core.dag.DagPlanValidator;
 import com.fundagent.core.llm.LLMConfig;
 import com.fundagent.core.llm.LLMService;
 import com.fundagent.core.llm.OpenAIService;
@@ -111,6 +114,23 @@ public class AgentAutoConfig {
     }
 
     @Bean
+    public DagPlanValidator dagPlanValidator(CapabilityCatalog capabilityCatalog) {
+        return new DagPlanValidator(capabilityCatalog);
+    }
+
+    @Bean
+    public DagPlanSchemaBuilder dagPlanSchemaBuilder() {
+        return new DagPlanSchemaBuilder();
+    }
+
+    @Bean
+    public CapabilityPlanningContextProvider capabilityPlanningContextProvider(
+            CapabilityCatalog capabilityCatalog,
+            DagPlanSchemaBuilder dagPlanSchemaBuilder) {
+        return new CapabilityPlanningContextProvider(capabilityCatalog, dagPlanSchemaBuilder);
+    }
+
+    @Bean
     public TaskRouter taskRouter() {
         return new RuleBasedTaskRouter();
     }
@@ -144,9 +164,10 @@ public class AgentAutoConfig {
     }
 
     @Bean
-    public CapabilityDagPlanner capabilityDagPlanner(LLMService llmService, CapabilityCatalog capabilityCatalog,
+    public CapabilityDagPlanner capabilityDagPlanner(LLMService llmService,
+                                                     CapabilityPlanningContextProvider planningContextProvider,
                                                      MemoryAssembler memoryAssembler) {
-        return new CapabilityDagPlanner(llmService, capabilityCatalog, memoryAssembler);
+        return new CapabilityDagPlanner(llmService, planningContextProvider, memoryAssembler);
     }
 
     @Bean

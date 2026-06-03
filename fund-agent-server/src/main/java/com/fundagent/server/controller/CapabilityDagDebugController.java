@@ -1,7 +1,7 @@
 package com.fundagent.server.controller;
 
 import com.alibaba.fastjson2.JSONObject;
-import com.fundagent.core.dag.DagPlan;
+import com.fundagent.server.dto.CapabilityDagDebugResult;
 import com.fundagent.server.service.CapabilityDagDebugService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.CrossOrigin;
@@ -22,7 +22,7 @@ public class CapabilityDagDebugController {
     }
 
     @PostMapping("/plan")
-    public DagPlan plan(@RequestBody JSONObject request) {
+    public CapabilityDagDebugResult plan(@RequestBody JSONObject request) {
         String conversationId = request.getString("conversationId");
         String message = request.getString("message");
         log.info("debug capability dag plan: conversationId={}, message={}", conversationId, message);
