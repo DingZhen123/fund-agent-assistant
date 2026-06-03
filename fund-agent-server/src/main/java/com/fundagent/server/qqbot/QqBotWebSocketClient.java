@@ -15,6 +15,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Slf4j
@@ -25,6 +26,7 @@ public class QqBotWebSocketClient {
     private static final int C2C_MESSAGE_INTENT = 1 << 25;
     private static final long INITIAL_RECONNECT_DELAY = 3;
     private static final long MAX_RECONNECT_DELAY = 60;
+    private static final int MAX_AUTH_RETRIES = 3;
 
     @Autowired
     private QqBotConfig config;
@@ -48,9 +50,11 @@ public class QqBotWebSocketClient {
     private ScheduledFuture<?> heartbeatTask;
     private final AtomicReference<Integer> sequence = new AtomicReference<>();
     private final AtomicReference<Long> heartbeatInterval = new AtomicReference<>(30000L);
+    private final AtomicInteger authRetryCount = new AtomicInteger(0);
     private long reconnectDelay = INITIAL_RECONNECT_DELAY;
     private volatile boolean reconnecting = false;
     private volatile boolean closed = false;
+    private volatile boolean currentAuthFailureHandled = false;
 
     @PostConstruct
     public void connect() {
@@ -59,6 +63,7 @@ public class QqBotWebSocketClient {
 
     private void doConnect() {
         if (closed) return;
+        currentAuthFailureHandled = false;
 
         String wsUrl = config.getWebsocketUrl();
         log.info("QQ Bot WebSocket 开始连接: {}", wsUrl);
@@ -93,13 +98,14 @@ public class QqBotWebSocketClient {
                     } else if (op == 11) {
                         log.debug("QQ Bot Heartbeat ACK");
                     } else if (op == 0) {
+                        authRetryCount.set(0);
                         handleDispatch(msg);
                     } else if (op == 7) {
                         log.warn("QQ Bot Gateway 要求重连");
                         reconnect(ws, "server reconnect");
                     } else if (op == 9) {
                         log.warn("QQ Bot Gateway 会话无效，重新鉴权");
-                        reconnect(ws, "invalid session");
+                        handleAuthenticationFailure(ws, "invalid session");
                     }
                 } catch (Exception e) {
                     log.error("QQ Bot WebSocket 消息处理异常", e);
@@ -111,6 +117,12 @@ public class QqBotWebSocketClient {
                 if (!isCurrentSocket(ws)) return;
                 log.warn("QQ Bot WebSocket 断开: code={} reason={}", code, reason);
                 cancelHeartbeat();
+                if (isAuthenticationFailure(code, reason)) {
+                    if (!currentAuthFailureHandled) {
+                        handleAuthenticationFailure(ws, reason);
+                    }
+                    return;
+                }
                 scheduleReconnect();
             }
 
@@ -131,7 +143,7 @@ public class QqBotWebSocketClient {
         String token = apiClient.getAccessToken();
         if (token == null) {
             log.error("无 access_token，无法认证");
-            ws.close(1000, "no token");
+            handleAuthenticationFailure(ws, "no token");
             return;
         }
 
@@ -145,7 +157,7 @@ public class QqBotWebSocketClient {
 
         if (!ws.send(payload.toJSONString())) {
             log.warn("QQ Bot 认证发送失败，准备重连");
-            reconnect(ws, "identify send failed");
+            handleAuthenticationFailure(ws, "identify send failed");
             return;
         }
         log.info("QQ Bot 认证已发送");
@@ -213,6 +225,30 @@ public class QqBotWebSocketClient {
         cancelHeartbeat();
         ws.close(1000, reason);
         scheduleReconnect();
+    }
+
+    private void handleAuthenticationFailure(WebSocket ws, String reason) {
+        if (!isCurrentSocket(ws)) return;
+        currentAuthFailureHandled = true;
+        cancelHeartbeat();
+        apiClient.invalidateAccessToken();
+
+        int retry = authRetryCount.incrementAndGet();
+        if (retry > MAX_AUTH_RETRIES) {
+            log.error("QQ Bot Gateway 认证连续失败{}次，停止自动重连: {}", MAX_AUTH_RETRIES, reason);
+            closed = true;
+            ws.close(1000, "authentication retry limit exceeded");
+            return;
+        }
+
+        log.warn("QQ Bot Gateway 认证失败，清理token后准备第{}/{}次重试: {}",
+                retry, MAX_AUTH_RETRIES, reason);
+        ws.close(1000, reason);
+        scheduleReconnect();
+    }
+
+    private boolean isAuthenticationFailure(int code, String reason) {
+        return code == 4004 || (reason != null && reason.toLowerCase().contains("authentication fail"));
     }
 
     @PreDestroy

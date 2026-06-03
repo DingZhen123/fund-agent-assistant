@@ -21,7 +21,8 @@ public class QqBotApiClient {
 
     private static final String TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken";
     private static final String MESSAGE_URL = "https://api.sgroup.qq.com/v2/users/%s/messages";
-    private static final String REDIS_KEY = "qq:bot:access_token";
+    private static final String REDIS_KEY_PREFIX = "qq:bot:access_token:";
+    private static final String LEGACY_REDIS_KEY = "qq:bot:access_token";
     private static final long TOKEN_EXPIRE_SECONDS = 7200;
     private static final long TOKEN_REFRESH_BUFFER = 300;
     private static final MediaType JSON_TYPE = MediaType.parse("application/json");
@@ -39,11 +40,17 @@ public class QqBotApiClient {
             .build();
 
     public String getAccessToken() {
-        String cached = (String) redisTemplate.opsForValue().get(REDIS_KEY);
+        String cached = (String) redisTemplate.opsForValue().get(getTokenRedisKey());
         if (cached != null && !cached.isEmpty()) {
             return cached;
         }
         return refreshAccessToken();
+    }
+
+    public void invalidateAccessToken() {
+        redisTemplate.delete(getTokenRedisKey());
+        redisTemplate.delete(LEGACY_REDIS_KEY);
+        log.info("QQ access_token缓存已清理");
     }
 
     private String refreshAccessToken() {
@@ -66,7 +73,7 @@ public class QqBotApiClient {
                 String token = result.getString("access_token");
                 if (token != null) {
                     long ttl = TOKEN_EXPIRE_SECONDS - TOKEN_REFRESH_BUFFER;
-                    redisTemplate.opsForValue().set(REDIS_KEY, token, ttl, TimeUnit.SECONDS);
+                    redisTemplate.opsForValue().set(getTokenRedisKey(), token, ttl, TimeUnit.SECONDS);
                     log.info("QQ access_token刷新成功, TTL={}s", ttl);
                 }
                 return token;
@@ -116,5 +123,9 @@ public class QqBotApiClient {
             log.error("发送私聊消息异常 openid={}", openid, e);
             return false;
         }
+    }
+
+    private String getTokenRedisKey() {
+        return REDIS_KEY_PREFIX + config.getAppId();
     }
 }
