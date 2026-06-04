@@ -12,7 +12,9 @@ import com.fundagent.core.agent.AgentRegistry;
 import com.fundagent.core.capability.CapabilityCatalog;
 import com.fundagent.core.capability.CapabilityCatalogProvider;
 import com.fundagent.core.capability.CapabilityValidator;
+import com.fundagent.core.dag.DefaultToolBinder;
 import com.fundagent.core.dag.DagPlanValidator;
+import com.fundagent.core.dag.ToolBinder;
 import com.fundagent.core.llm.LLMConfig;
 import com.fundagent.core.llm.LLMService;
 import com.fundagent.core.llm.OpenAIService;
@@ -116,6 +118,11 @@ public class AgentAutoConfig {
     @Bean
     public DagPlanValidator dagPlanValidator(CapabilityCatalog capabilityCatalog) {
         return new DagPlanValidator(capabilityCatalog);
+    }
+
+    @Bean
+    public ToolBinder toolBinder(CapabilityCatalog capabilityCatalog, ToolSchemaResolver toolSchemaResolver) {
+        return new DefaultToolBinder(capabilityCatalog, toolSchemaResolver);
     }
 
     @Bean

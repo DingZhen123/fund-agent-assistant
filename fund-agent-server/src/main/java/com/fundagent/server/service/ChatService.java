@@ -3,9 +3,12 @@ package com.fundagent.server.service;
 import com.alibaba.fastjson2.JSON;
 import com.fundagent.agents.dag.CapabilityDagPlanner;
 import com.fundagent.agents.graph.GraphTaskPlanner;
+import com.fundagent.core.dag.BoundDagPlan;
 import com.fundagent.core.dag.DagPlan;
 import com.fundagent.core.dag.DagPlanValidationResult;
 import com.fundagent.core.dag.DagPlanValidator;
+import com.fundagent.core.dag.ToolBinder;
+import com.fundagent.core.dag.ToolBindingResult;
 import com.fundagent.core.graph.GraphResult;
 import com.fundagent.core.graph.GraphOrchestrator;
 import com.fundagent.core.graph.TaskPlan;
@@ -44,6 +47,7 @@ public class ChatService {
     private final Orchestrator orchestrator;
     private final CapabilityDagPlanner capabilityDagPlanner;
     private final DagPlanValidator dagPlanValidator;
+    private final ToolBinder toolBinder;
     private final GraphTaskPlanner graphTaskPlanner;
     private final GraphOrchestrator graphOrchestrator;
     private final TaskRouter taskRouter;
@@ -57,7 +61,7 @@ public class ChatService {
     private final PostMapper postMapper;
 
     public ChatService(Orchestrator orchestrator, CapabilityDagPlanner capabilityDagPlanner,
-                       DagPlanValidator dagPlanValidator, GraphTaskPlanner graphTaskPlanner,
+                       DagPlanValidator dagPlanValidator, ToolBinder toolBinder, GraphTaskPlanner graphTaskPlanner,
                        GraphOrchestrator graphOrchestrator, TaskRouter taskRouter, ToolSelector toolSelector,
                        ToolSchemaResolver toolSchemaResolver,
                        SessionService sessionService,
@@ -68,6 +72,7 @@ public class ChatService {
         this.orchestrator = orchestrator;
         this.capabilityDagPlanner = capabilityDagPlanner;
         this.dagPlanValidator = dagPlanValidator;
+        this.toolBinder = toolBinder;
         this.graphTaskPlanner = graphTaskPlanner;
         this.graphOrchestrator = graphOrchestrator;
         this.taskRouter = taskRouter;
@@ -223,6 +228,16 @@ public class ChatService {
                 capabilityDagValidation.isValid()
                         ? "能力DAG协议校验通过"
                         : "能力DAG协议校验失败: " + capabilityDagValidation.getMessage());
+        BoundDagPlan boundCapabilityDag = toolBinder.bind(capabilityDag);
+        ToolBindingResult capabilityDagBinding = toolBinder.validate(boundCapabilityDag);
+        log.info("Capability DAG tool binding: success={}, errorCode={}, message={}",
+                capabilityDagBinding.isSuccess(),
+                capabilityDagBinding.getErrorCode(),
+                capabilityDagBinding.getMessage());
+        emit(listener, OrchestrationEventType.AGENT_END, "ToolBinder",
+                capabilityDagBinding.isSuccess()
+                        ? "能力DAG工具绑定完成"
+                        : "能力DAG工具绑定失败: " + capabilityDagBinding.getMessage());
 
         ToolSelectionResult toolSelection = selectTools(userId, ctx.conversationId, message);
         emit(listener, OrchestrationEventType.AGENT_END, "ToolSelector",
@@ -249,6 +264,8 @@ public class ChatService {
         userPost.addAttachment("tool_selection", JSON.toJSONString(toolSelection));
         userPost.addAttachment("capability_dag", JSON.toJSONString(capabilityDag));
         userPost.addAttachment("capability_dag_validation", JSON.toJSONString(capabilityDagValidation));
+        userPost.addAttachment("bound_capability_dag", JSON.toJSONString(boundCapabilityDag));
+        userPost.addAttachment("capability_dag_binding", JSON.toJSONString(capabilityDagBinding));
         round.addPost(userPost);
 
         Post graphPost = Post.create("GraphOrchestrator", "User", finalAnswer);
