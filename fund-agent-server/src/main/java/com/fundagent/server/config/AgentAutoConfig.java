@@ -1,9 +1,13 @@
 package com.fundagent.server.config;
 
 import com.fundagent.agents.executor.ExecutorAgent;
+import com.fundagent.agents.dag.AnswerNodeExecutor;
+import com.fundagent.agents.dag.AskUserNodeExecutor;
 import com.fundagent.agents.dag.CapabilityDagPlanner;
 import com.fundagent.agents.dag.CapabilityPlanningContextProvider;
 import com.fundagent.agents.dag.DagPlanSchemaBuilder;
+import com.fundagent.agents.dag.ReasonNodeExecutor;
+import com.fundagent.agents.dag.ToolNodeExecutor;
 import com.fundagent.agents.graph.GraphAnswerGenerator;
 import com.fundagent.agents.graph.GraphTaskPlanner;
 import com.fundagent.agents.planner.PlannerAgent;
@@ -12,8 +16,12 @@ import com.fundagent.core.agent.AgentRegistry;
 import com.fundagent.core.capability.CapabilityCatalog;
 import com.fundagent.core.capability.CapabilityCatalogProvider;
 import com.fundagent.core.capability.CapabilityValidator;
+import com.fundagent.core.dag.DefaultNodeRouter;
 import com.fundagent.core.dag.DefaultToolBinder;
+import com.fundagent.core.dag.DagRuntime;
 import com.fundagent.core.dag.DagPlanValidator;
+import com.fundagent.core.dag.NodeExecutor;
+import com.fundagent.core.dag.NodeRouter;
 import com.fundagent.core.dag.ToolBinder;
 import com.fundagent.core.llm.LLMConfig;
 import com.fundagent.core.llm.LLMService;
@@ -126,6 +134,17 @@ public class AgentAutoConfig {
     }
 
     @Bean
+    public NodeRouter nodeRouter(List<NodeExecutor> executors) {
+        log.info("NodeRouter initialized: executors={}", executors.size());
+        return new DefaultNodeRouter(executors);
+    }
+
+    @Bean
+    public DagRuntime dagRuntime(NodeRouter nodeRouter) {
+        return new DagRuntime(nodeRouter);
+    }
+
+    @Bean
     public DagPlanSchemaBuilder dagPlanSchemaBuilder() {
         return new DagPlanSchemaBuilder();
     }
@@ -175,6 +194,26 @@ public class AgentAutoConfig {
                                                      CapabilityPlanningContextProvider planningContextProvider,
                                                      MemoryAssembler memoryAssembler) {
         return new CapabilityDagPlanner(llmService, planningContextProvider, memoryAssembler);
+    }
+
+    @Bean
+    public ToolNodeExecutor toolNodeExecutor(LLMService llmService, ToolRegistry toolRegistry) {
+        return new ToolNodeExecutor(llmService, toolRegistry);
+    }
+
+    @Bean
+    public ReasonNodeExecutor reasonNodeExecutor(LLMService llmService) {
+        return new ReasonNodeExecutor(llmService);
+    }
+
+    @Bean
+    public AnswerNodeExecutor answerNodeExecutor(LLMService llmService) {
+        return new AnswerNodeExecutor(llmService);
+    }
+
+    @Bean
+    public AskUserNodeExecutor askUserNodeExecutor() {
+        return new AskUserNodeExecutor();
     }
 
     @Bean

@@ -1,6 +1,7 @@
 package com.fundagent.server.dto;
 
 import com.fundagent.core.dag.BoundDagPlan;
+import com.fundagent.core.dag.DagRunResult;
 import com.fundagent.core.dag.DagPlan;
 import com.fundagent.core.dag.DagPlanValidationResult;
 import com.fundagent.core.dag.ToolBindingResult;
@@ -14,4 +15,5 @@ public class CapabilityDagDebugResult {
     private DagPlanValidationResult validation;
     private BoundDagPlan boundDagPlan;
     private ToolBindingResult binding;
+    private DagRunResult runResult;
 }

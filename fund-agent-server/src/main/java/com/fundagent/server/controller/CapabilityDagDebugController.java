@@ -28,4 +28,15 @@ public class CapabilityDagDebugController {
         log.info("debug capability dag plan: conversationId={}, message={}", conversationId, message);
         return capabilityDagDebugService.plan(conversationId, message);
     }
+
+    @PostMapping("/run")
+    public CapabilityDagDebugResult run(@RequestBody JSONObject request) {
+        String conversationId = request.getString("conversationId");
+        String message = request.getString("message");
+        String userId = request.getString("userId");
+        log.info("debug capability dag run: conversationId={}, userId={}, message={}",
+                conversationId, userId, message);
+        return capabilityDagDebugService.run(conversationId, message,
+                userId != null && !userId.isBlank() ? userId : "debug-user");
+    }
 }
