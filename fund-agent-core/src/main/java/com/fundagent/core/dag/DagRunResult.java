@@ -4,6 +4,9 @@ import com.alibaba.fastjson2.annotation.JSONField;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 @Data
 @AllArgsConstructor
 public class DagRunResult {
@@ -18,17 +21,40 @@ public class DagRunResult {
 
     private String message;
 
-    public static DagRunResult completed(DagGraphState state, NodeExecutionResult lastResult) {
-        return new DagRunResult(DagRunStatus.COMPLETED, state, lastResult, null, null);
+    @JSONField(name = "node_completion_results")
+    private Map<String, NodeCompletionResult> nodeCompletionResults;
+
+    @JSONField(name = "final_verification")
+    private FinalVerificationResult finalVerification;
+
+    public static DagRunResult completed(DagGraphState state, NodeExecutionResult lastResult,
+                                         Map<String, NodeCompletionResult> nodeCompletionResults,
+                                         FinalVerificationResult finalVerification) {
+        return new DagRunResult(DagRunStatus.COMPLETED, state, lastResult, null, null,
+                safeResults(nodeCompletionResults), finalVerification);
     }
 
-    public static DagRunResult waiting(DagGraphState state, NodeExecutionResult lastResult) {
+    public static DagRunResult waiting(DagGraphState state, NodeExecutionResult lastResult,
+                                       Map<String, NodeCompletionResult> nodeCompletionResults) {
         return new DagRunResult(DagRunStatus.WAITING_USER_INPUT, state, lastResult,
-                null, lastResult != null ? lastResult.getMessage() : null);
+                null, lastResult != null ? lastResult.getMessage() : null,
+                safeResults(nodeCompletionResults), null);
+    }
+
+    public static DagRunResult failed(DagGraphState state, NodeExecutionResult lastResult,
+                                      String errorCode, String message,
+                                      Map<String, NodeCompletionResult> nodeCompletionResults,
+                                      FinalVerificationResult finalVerification) {
+        return new DagRunResult(DagRunStatus.FAILED, state, lastResult, errorCode, message,
+                safeResults(nodeCompletionResults), finalVerification);
     }
 
     public static DagRunResult failed(DagGraphState state, NodeExecutionResult lastResult,
                                       String errorCode, String message) {
-        return new DagRunResult(DagRunStatus.FAILED, state, lastResult, errorCode, message);
+        return failed(state, lastResult, errorCode, message, null, null);
+    }
+
+    private static Map<String, NodeCompletionResult> safeResults(Map<String, NodeCompletionResult> results) {
+        return results != null ? results : new LinkedHashMap<>();
     }
 }

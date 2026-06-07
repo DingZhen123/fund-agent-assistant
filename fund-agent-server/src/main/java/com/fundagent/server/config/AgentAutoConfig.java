@@ -17,9 +17,13 @@ import com.fundagent.core.capability.CapabilityCatalog;
 import com.fundagent.core.capability.CapabilityCatalogProvider;
 import com.fundagent.core.capability.CapabilityValidator;
 import com.fundagent.core.dag.DefaultNodeRouter;
+import com.fundagent.core.dag.DefaultNodeCompletionChecker;
+import com.fundagent.core.dag.DefaultFinalDagVerifier;
 import com.fundagent.core.dag.DefaultToolBinder;
 import com.fundagent.core.dag.DagRuntime;
 import com.fundagent.core.dag.DagPlanValidator;
+import com.fundagent.core.dag.FinalDagVerifier;
+import com.fundagent.core.dag.NodeCompletionChecker;
 import com.fundagent.core.dag.NodeExecutor;
 import com.fundagent.core.dag.NodeRouter;
 import com.fundagent.core.dag.ToolBinder;
@@ -140,8 +144,19 @@ public class AgentAutoConfig {
     }
 
     @Bean
-    public DagRuntime dagRuntime(NodeRouter nodeRouter) {
-        return new DagRuntime(nodeRouter);
+    public NodeCompletionChecker nodeCompletionChecker() {
+        return new DefaultNodeCompletionChecker();
+    }
+
+    @Bean
+    public FinalDagVerifier finalDagVerifier() {
+        return new DefaultFinalDagVerifier();
+    }
+
+    @Bean
+    public DagRuntime dagRuntime(NodeRouter nodeRouter, NodeCompletionChecker nodeCompletionChecker,
+                                 FinalDagVerifier finalDagVerifier) {
+        return new DagRuntime(nodeRouter, nodeCompletionChecker, finalDagVerifier);
     }
 
     @Bean
