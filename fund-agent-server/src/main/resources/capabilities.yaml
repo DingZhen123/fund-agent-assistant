@@ -7,6 +7,7 @@ capabilities:
     description: 查询付款状态、付款金额、收付款方、付款时间和回单可用性
     bindableTools:
       - queryPaymentDocuments
+      - payment_status_query_mock
     enabled: true
 
   finance.receipt.send:
@@ -47,4 +48,70 @@ capabilities:
       - ask
     description: 缺少必要信息时向用户追问
     bindableTools: []
+    enabled: true
+
+  common.echo:
+    nodeType: QUERY
+    domain: common
+    intents:
+      - echo
+      - debug
+    description: 原样返回输入文本，用于验证工具连通性
+    bindableTools:
+      - echo
+    enabled: true
+
+  common.time.current:
+    nodeType: QUERY
+    domain: common
+    intents:
+      - time
+      - query
+    description: 查询指定时区的当前时间
+    bindableTools:
+      - current_time
+    enabled: true
+
+  common.uuid.generate:
+    nodeType: QUERY
+    domain: common
+    intents:
+      - generate
+      - uuid
+    description: 生成随机UUID
+    bindableTools:
+      - generate_uuid
+    enabled: true
+
+  common.text.stats:
+    nodeType: QUERY
+    domain: common
+    intents:
+      - text
+      - stats
+    description: 统计文本长度、去空格长度和行数
+    bindableTools:
+      - text_stats
+    enabled: true
+
+  common.calculate.simple:
+    nodeType: QUERY
+    domain: common
+    intents:
+      - calculate
+      - math
+    description: 执行简单四则运算
+    bindableTools:
+      - simple_calculator
+    enabled: true
+
+  common.json.get_field:
+    nodeType: QUERY
+    domain: common
+    intents:
+      - json
+      - extract
+    description: 从简单JSON对象中读取顶层字段
+    bindableTools:
+      - json_get_field
     enabled: true

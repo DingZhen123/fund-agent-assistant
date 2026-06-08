@@ -42,6 +42,12 @@ agent:
     max-internal-rounds: 10
     context-rounds: 10
     executor-max-retries: 3
+  tools:
+    mcp:
+      enabled: true
+      base-url: ${MCP_TOOL_BASE_URL:http://101.200.131.156:8091/mcp}
+      api-key: ${MCP_TOOL_API_KEY:}
+      timeout-ms: ${MCP_TOOL_TIMEOUT_MS:5000}
 
 qq-bot:
   enabled: true

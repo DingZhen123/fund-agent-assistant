@@ -3,6 +3,7 @@ package com.fundagent.agents.dag;
 import com.alibaba.fastjson2.JSON;
 import com.fundagent.common.model.Message;
 import com.fundagent.core.dag.DagPlan;
+import com.fundagent.core.dag.DagPlanNormalizer;
 import com.fundagent.core.llm.LLMService;
 import com.fundagent.core.memory.Memory;
 import com.fundagent.core.memory.MemoryAssembler;
@@ -18,12 +19,14 @@ public class CapabilityDagPlanner {
     private final LLMService llmService;
     private final CapabilityPlanningContextProvider planningContextProvider;
     private final MemoryAssembler memoryAssembler;
+    private final DagPlanNormalizer dagPlanNormalizer;
 
     public CapabilityDagPlanner(LLMService llmService, CapabilityPlanningContextProvider planningContextProvider,
-                                MemoryAssembler memoryAssembler) {
+                                MemoryAssembler memoryAssembler, DagPlanNormalizer dagPlanNormalizer) {
         this.llmService = llmService;
         this.planningContextProvider = planningContextProvider;
         this.memoryAssembler = memoryAssembler;
+        this.dagPlanNormalizer = dagPlanNormalizer;
     }
 
     public DagPlan plan(Memory memory, String userMessage) {
@@ -43,7 +46,7 @@ public class CapabilityDagPlanner {
                 "capability_dag",
                 planningContext.getDagPlanSchema());
         log.info("CapabilityDagPlanner raw: {}", raw);
-        return JSON.parseObject(raw, DagPlan.class);
+        return dagPlanNormalizer.normalize(JSON.parseObject(raw, DagPlan.class));
     }
 
     private String buildSystemPrompt(CapabilityPlanningContext planningContext) {

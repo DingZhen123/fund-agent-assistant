@@ -18,6 +18,7 @@ import com.fundagent.core.dag.DefaultFinalDagVerifier;
 import com.fundagent.core.dag.DefaultToolBinder;
 import com.fundagent.core.dag.DagRuntime;
 import com.fundagent.core.dag.DagPlanValidator;
+import com.fundagent.core.dag.DagPlanNormalizer;
 import com.fundagent.core.dag.FinalDagVerifier;
 import com.fundagent.core.dag.NodeCompletionChecker;
 import com.fundagent.core.dag.NodeExecutor;
@@ -113,6 +114,11 @@ public class AgentAutoConfig {
     }
 
     @Bean
+    public DagPlanNormalizer dagPlanNormalizer() {
+        return new DagPlanNormalizer();
+    }
+
+    @Bean
     public ReplanPatchValidator replanPatchValidator(CapabilityCatalog capabilityCatalog) {
         return new ReplanPatchValidator(capabilityCatalog);
     }
@@ -164,8 +170,9 @@ public class AgentAutoConfig {
     @Bean
     public CapabilityDagPlanner capabilityDagPlanner(LLMService llmService,
                                                      CapabilityPlanningContextProvider planningContextProvider,
-                                                     MemoryAssembler memoryAssembler) {
-        return new CapabilityDagPlanner(llmService, planningContextProvider, memoryAssembler);
+                                                     MemoryAssembler memoryAssembler,
+                                                     DagPlanNormalizer dagPlanNormalizer) {
+        return new CapabilityDagPlanner(llmService, planningContextProvider, memoryAssembler, dagPlanNormalizer);
     }
 
     @Bean

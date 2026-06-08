@@ -1,0 +1,7 @@
+server:
+  port: 8091
+
+mcp:
+  auth:
+    enabled: false
+    api-key:

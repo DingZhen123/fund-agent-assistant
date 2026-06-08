@@ -43,3 +43,160 @@ tools:
           description: 支付单据号
           pattern: "^(EC|LA|TR|FP|YFKD).+"
           example: EC2025
+
+  payment_status_query_mock:
+    domain: finance
+    version: v1
+    riskLevel: low
+    intents:
+      - query
+      - payment
+    providerType: MCP
+    requiresAuth: false
+    requiresConfirmation: false
+    enabled: true
+    paramsSchema:
+      type: object
+      required:
+        - noteCode
+      additionalProperties: false
+      properties:
+        noteCode:
+          type: string
+          description: 付款单据编号
+          example: EC2025
+
+  echo:
+    domain: common
+    version: v1
+    riskLevel: low
+    intents:
+      - echo
+      - debug
+    providerType: MCP
+    requiresAuth: false
+    requiresConfirmation: false
+    enabled: true
+    paramsSchema:
+      type: object
+      required:
+        - text
+      additionalProperties: false
+      properties:
+        text:
+          type: string
+          description: 需要原样返回的文本
+
+  current_time:
+    domain: common
+    version: v1
+    riskLevel: low
+    intents:
+      - time
+      - query
+    providerType: MCP
+    requiresAuth: false
+    requiresConfirmation: false
+    enabled: true
+    paramsSchema:
+      type: object
+      required:
+        - timezone
+      additionalProperties: false
+      properties:
+        timezone:
+          type: string
+          description: IANA时区，例如 Asia/Shanghai、UTC、America/New_York
+          example: Asia/Shanghai
+
+  generate_uuid:
+    domain: common
+    version: v1
+    riskLevel: low
+    intents:
+      - generate
+      - uuid
+    providerType: MCP
+    requiresAuth: false
+    requiresConfirmation: false
+    enabled: true
+    paramsSchema:
+      type: object
+      required: []
+      additionalProperties: false
+      properties: {}
+
+  text_stats:
+    domain: common
+    version: v1
+    riskLevel: low
+    intents:
+      - text
+      - stats
+    providerType: MCP
+    requiresAuth: false
+    requiresConfirmation: false
+    enabled: true
+    paramsSchema:
+      type: object
+      required:
+        - text
+      additionalProperties: false
+      properties:
+        text:
+          type: string
+          description: 需要统计的文本
+
+  simple_calculator:
+    domain: common
+    version: v1
+    riskLevel: low
+    intents:
+      - calculate
+      - math
+    providerType: MCP
+    requiresAuth: false
+    requiresConfirmation: false
+    enabled: true
+    paramsSchema:
+      type: object
+      required:
+        - left
+        - right
+        - operator
+      additionalProperties: false
+      properties:
+        left:
+          type: number
+          description: 左操作数
+        right:
+          type: number
+          description: 右操作数
+        operator:
+          type: string
+          description: 运算符，支持 add、subtract、multiply、divide
+
+  json_get_field:
+    domain: common
+    version: v1
+    riskLevel: low
+    intents:
+      - json
+      - extract
+    providerType: MCP
+    requiresAuth: false
+    requiresConfirmation: false
+    enabled: true
+    paramsSchema:
+      type: object
+      required:
+        - object
+        - field
+      additionalProperties: false
+      properties:
+        object:
+          type: object
+          description: 需要读取字段的JSON对象
+        field:
+          type: string
+          description: 顶层字段名
