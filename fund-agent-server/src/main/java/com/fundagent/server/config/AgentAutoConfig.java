@@ -1,18 +1,14 @@
 package com.fundagent.server.config;
 
-import com.fundagent.agents.executor.ExecutorAgent;
 import com.fundagent.agents.dag.AnswerNodeExecutor;
 import com.fundagent.agents.dag.AskUserNodeExecutor;
 import com.fundagent.agents.dag.CapabilityDagPlanner;
+import com.fundagent.agents.dag.CapabilityDagRePlanner;
 import com.fundagent.agents.dag.CapabilityPlanningContextProvider;
 import com.fundagent.agents.dag.DagPlanSchemaBuilder;
 import com.fundagent.agents.dag.ReasonNodeExecutor;
+import com.fundagent.agents.dag.ReplanningDagRuntime;
 import com.fundagent.agents.dag.ToolNodeExecutor;
-import com.fundagent.agents.graph.GraphAnswerGenerator;
-import com.fundagent.agents.graph.GraphTaskPlanner;
-import com.fundagent.agents.planner.PlannerAgent;
-import com.fundagent.core.agent.AgentEntry;
-import com.fundagent.core.agent.AgentRegistry;
 import com.fundagent.core.capability.CapabilityCatalog;
 import com.fundagent.core.capability.CapabilityCatalogProvider;
 import com.fundagent.core.capability.CapabilityValidator;
@@ -26,24 +22,18 @@ import com.fundagent.core.dag.FinalDagVerifier;
 import com.fundagent.core.dag.NodeCompletionChecker;
 import com.fundagent.core.dag.NodeExecutor;
 import com.fundagent.core.dag.NodeRouter;
+import com.fundagent.core.dag.ReplanPatchValidator;
 import com.fundagent.core.dag.ToolBinder;
 import com.fundagent.core.llm.LLMConfig;
 import com.fundagent.core.llm.LLMService;
 import com.fundagent.core.llm.OpenAIService;
-import com.fundagent.core.graph.GraphOrchestrator;
 import com.fundagent.core.memory.DefaultMemoryAssembler;
 import com.fundagent.core.memory.MemoryAssembler;
-import com.fundagent.core.orchestration.Orchestrator;
-import com.fundagent.core.routing.RuleBasedTaskRouter;
-import com.fundagent.core.routing.TaskRouter;
 import com.fundagent.core.tool.ToolRegistry;
 import com.fundagent.core.tool.catalog.ToolCatalog;
 import com.fundagent.core.tool.catalog.ToolCatalogProvider;
 import com.fundagent.core.tool.provider.ToolProvider;
 import com.fundagent.core.tool.schema.ToolSchemaResolver;
-import com.fundagent.core.tool.selection.DefaultToolSelector;
-import com.fundagent.core.tool.selection.ToolSelectionStage;
-import com.fundagent.core.tool.selection.ToolSelector;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -67,12 +57,8 @@ public class AgentAutoConfig {
     private int maxTokens;
     @Value("${agent.llm.timeout-seconds:60}")
     private int timeoutSeconds;
-    @Value("${agent.orchestration.max-internal-rounds:10}")
-    private int maxInternalRounds;
     @Value("${agent.orchestration.context-rounds:10}")
     private int contextRounds;
-    @Value("${agent.orchestration.executor-max-retries:3}")
-    private int executorMaxRetries;
 
     @Bean
     public LLMConfig llmConfig() {
@@ -105,12 +91,6 @@ public class AgentAutoConfig {
     }
 
     @Bean
-    public ToolSelector toolSelector(List<ToolSelectionStage> stages) {
-        log.info("ToolSelector initialized: stages={}", stages.size());
-        return new DefaultToolSelector(stages);
-    }
-
-    @Bean
     public ToolSchemaResolver toolSchemaResolver(ToolRegistry toolRegistry) {
         return new ToolSchemaResolver(toolRegistry);
     }
@@ -130,6 +110,11 @@ public class AgentAutoConfig {
     @Bean
     public DagPlanValidator dagPlanValidator(CapabilityCatalog capabilityCatalog) {
         return new DagPlanValidator(capabilityCatalog);
+    }
+
+    @Bean
+    public ReplanPatchValidator replanPatchValidator(CapabilityCatalog capabilityCatalog) {
+        return new ReplanPatchValidator(capabilityCatalog);
     }
 
     @Bean
@@ -172,36 +157,8 @@ public class AgentAutoConfig {
     }
 
     @Bean
-    public TaskRouter taskRouter() {
-        return new RuleBasedTaskRouter();
-    }
-
-    @Bean
     public MemoryAssembler memoryAssembler() {
         return new DefaultMemoryAssembler(contextRounds);
-    }
-
-    @Bean
-    public AgentRegistry agentRegistry() {
-        return new AgentRegistry();
-    }
-
-    @Bean
-    public Orchestrator orchestrator(AgentRegistry registry) {
-        return new Orchestrator(registry, maxInternalRounds);
-    }
-
-    @Bean
-    public GraphOrchestrator graphOrchestrator(ToolRegistry toolRegistry, GraphAnswerGenerator graphAnswerGenerator) {
-        GraphOrchestrator graphOrchestrator = new GraphOrchestrator(toolRegistry);
-        graphOrchestrator.setAnswerGenerator(graphAnswerGenerator::generate);
-        return graphOrchestrator;
-    }
-
-    @Bean
-    public GraphTaskPlanner graphTaskPlanner(LLMService llmService, ToolRegistry toolRegistry,
-                                             MemoryAssembler memoryAssembler) {
-        return new GraphTaskPlanner(llmService, toolRegistry, memoryAssembler);
     }
 
     @Bean
@@ -209,6 +166,20 @@ public class AgentAutoConfig {
                                                      CapabilityPlanningContextProvider planningContextProvider,
                                                      MemoryAssembler memoryAssembler) {
         return new CapabilityDagPlanner(llmService, planningContextProvider, memoryAssembler);
+    }
+
+    @Bean
+    public CapabilityDagRePlanner capabilityDagRePlanner(LLMService llmService,
+                                                         CapabilityPlanningContextProvider planningContextProvider) {
+        return new CapabilityDagRePlanner(llmService, planningContextProvider);
+    }
+
+    @Bean
+    public ReplanningDagRuntime replanningDagRuntime(DagRuntime dagRuntime,
+                                                     CapabilityDagRePlanner capabilityDagRePlanner,
+                                                     ReplanPatchValidator replanPatchValidator,
+                                                     ToolBinder toolBinder) {
+        return new ReplanningDagRuntime(dagRuntime, capabilityDagRePlanner, replanPatchValidator, toolBinder);
     }
 
     @Bean
@@ -229,45 +200,5 @@ public class AgentAutoConfig {
     @Bean
     public AskUserNodeExecutor askUserNodeExecutor() {
         return new AskUserNodeExecutor();
-    }
-
-    @Bean
-    public GraphAnswerGenerator graphAnswerGenerator(LLMService llmService) {
-        return new GraphAnswerGenerator(llmService);
-    }
-
-    @Bean
-    public AgentEntry plannerEntry() {
-        return new AgentEntry("Planner", "任务规划器", PlannerAgent.class, true);
-    }
-
-    @Bean
-    public AgentEntry executorEntry() {
-        return new AgentEntry("Executor", "工具调用执行器", ExecutorAgent.class, false);
-    }
-
-    @Bean
-    public PlannerAgent plannerAgent(AgentRegistry registry, ToolRegistry toolRegistry,
-                                     MemoryAssembler memoryAssembler) {
-        PlannerAgent agent = new PlannerAgent(plannerEntry(), registry, toolRegistry, memoryAssembler);
-        agent.setLlmService(llmService());
-        return agent;
-    }
-
-    @Bean
-    public ExecutorAgent executorAgent(ToolRegistry toolRegistry) {
-        ExecutorAgent agent = new ExecutorAgent(executorEntry(), toolRegistry, executorMaxRetries);
-        agent.setLlmService(llmService());
-        return agent;
-    }
-
-    @Bean
-    public Object agentInitializer(AgentRegistry registry, PlannerAgent planner, ExecutorAgent executor) {
-        registry.register(plannerEntry());
-        registry.register(executorEntry());
-        registry.registerInstance(planner);
-        registry.registerInstance(executor);
-        log.info("Agents registered: Planner, Executor");
-        return new Object();
     }
 }

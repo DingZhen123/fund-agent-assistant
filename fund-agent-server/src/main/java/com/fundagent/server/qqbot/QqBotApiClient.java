@@ -25,6 +25,7 @@ public class QqBotApiClient {
     private static final String LEGACY_REDIS_KEY = "qq:bot:access_token";
     private static final long TOKEN_EXPIRE_SECONDS = 7200;
     private static final long TOKEN_REFRESH_BUFFER = 300;
+    private static final int MESSAGE_SEND_MAX_ATTEMPTS = 3;
     private static final MediaType JSON_TYPE = MediaType.parse("application/json");
 
     @Autowired
@@ -89,18 +90,37 @@ public class QqBotApiClient {
     }
 
     public boolean sendPrivateMessage(String openid, String content, String replyMsgId) {
-        try {
-            String token = getAccessToken();
-            if (token == null) {
-                log.error("无access_token，无法发送私聊消息");
+        JSONObject body = new JSONObject();
+        body.put("content", content);
+        body.put("msg_type", 0);
+        if (replyMsgId != null) {
+            body.put("msg_id", replyMsgId);
+        }
+
+        for (int attempt = 1; attempt <= MESSAGE_SEND_MAX_ATTEMPTS; attempt++) {
+            boolean forceRefresh = attempt > 1;
+            SendMessageResult result = doSendPrivateMessage(openid, body, forceRefresh, attempt);
+            if (result.success) {
+                return true;
+            }
+            if (!result.tokenExpired) {
                 return false;
             }
+            invalidateAccessToken();
+            log.warn("QQ access_token已过期，刷新后重试发送私聊消息: openid={}, attempt={}/{}",
+                    openid, attempt, MESSAGE_SEND_MAX_ATTEMPTS);
+        }
+        log.error("发送私聊消息失败，access_token刷新重试仍未成功: openid={}", openid);
+        return false;
+    }
 
-            JSONObject body = new JSONObject();
-            body.put("content", content);
-            body.put("msg_type", 0);
-            if (replyMsgId != null) {
-                body.put("msg_id", replyMsgId);
+    private SendMessageResult doSendPrivateMessage(String openid, JSONObject body,
+                                                   boolean forceRefreshToken, int attempt) {
+        try {
+            String token = forceRefreshToken ? refreshAccessToken() : getAccessToken();
+            if (token == null) {
+                log.error("无access_token，无法发送私聊消息");
+                return SendMessageResult.failed(false);
             }
 
             String url = String.format(MESSAGE_URL, openid);
@@ -114,18 +134,48 @@ public class QqBotApiClient {
             try (Response response = httpClient.newCall(request).execute()) {
                 if (!response.isSuccessful()) {
                     String errBody = response.body() != null ? response.body().string() : "";
-                    log.error("发送私聊消息失败: {} {} openid={}", response.code(), errBody, openid);
-                    return false;
+                    boolean tokenExpired = isTokenExpiredError(response.code(), errBody);
+                    log.error("发送私聊消息失败: {} {} openid={}, attempt={}, tokenExpired={}",
+                            response.code(), errBody, openid, attempt, tokenExpired);
+                    return SendMessageResult.failed(tokenExpired);
                 }
-                return true;
+                return SendMessageResult.ok();
             }
         } catch (IOException e) {
             log.error("发送私聊消息异常 openid={}", openid, e);
-            return false;
+            return SendMessageResult.failed(false);
+        }
+    }
+
+    private boolean isTokenExpiredError(int httpCode, String errBody) {
+        if (errBody == null || errBody.isBlank()) {
+            return httpCode == 401;
+        }
+        try {
+            JSONObject error = JSON.parseObject(errBody);
+            Integer code = error.getInteger("code");
+            Integer errCode = error.getInteger("err_code");
+            String message = error.getString("message");
+            return httpCode == 401
+                    || Integer.valueOf(11244).equals(code)
+                    || Integer.valueOf(11244).equals(errCode)
+                    || (message != null && message.toLowerCase().contains("token"));
+        } catch (Exception ignored) {
+            return httpCode == 401 || errBody.toLowerCase().contains("token");
         }
     }
 
     private String getTokenRedisKey() {
         return REDIS_KEY_PREFIX + config.getAppId();
+    }
+
+    private record SendMessageResult(boolean success, boolean tokenExpired) {
+        static SendMessageResult ok() {
+            return new SendMessageResult(true, false);
+        }
+
+        static SendMessageResult failed(boolean tokenExpired) {
+            return new SendMessageResult(false, tokenExpired);
+        }
     }
 }

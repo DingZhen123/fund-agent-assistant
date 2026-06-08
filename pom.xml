@@ -24,6 +24,7 @@
         <module>fund-agent-agents</module>
         <module>fund-agent-repo</module>
         <module>fund-agent-server</module>
+        <module>fund-agent-mcp-server</module>
     </modules>
 
     <properties>
@@ -57,6 +58,11 @@
             <dependency>
                 <groupId>com.fundagent</groupId>
                 <artifactId>fund-agent-repo</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fundagent</groupId>
+                <artifactId>fund-agent-mcp-server</artifactId>
                 <version>${project.version}</version>
             </dependency>
         </dependencies>
