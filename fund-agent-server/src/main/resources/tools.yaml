@@ -66,6 +66,46 @@ tools:
           description: 付款单据编号
           example: EC2025
 
+  knowledgeSearch:
+    domain: knowledge
+    version: v1
+    riskLevel: low
+    intents:
+      - search
+      - query
+      - faq
+      - sop
+      - policy
+      - explain
+    providerType: LOCAL
+    requiresAuth: true
+    requiresConfirmation: false
+    enabled: true
+    paramsSchema:
+      type: object
+      required:
+        - query
+        - knowledgeBaseId
+        - topK
+      additionalProperties: false
+      properties:
+        query:
+          type: string
+          description: 用户需要查询的知识库问题或检索语句
+          minLength: 1
+        knowledgeBaseId:
+          type: string
+          description: 知识库ID；默认资金知识库使用 fund.payment.sop
+          enum:
+            - fund.payment.sop
+          example: fund.payment.sop
+        topK:
+          type: integer
+          description: 返回命中片段数量，建议5，最大10
+          minimum: 1
+          maximum: 10
+          example: 5
+
   echo:
     domain: common
     version: v1

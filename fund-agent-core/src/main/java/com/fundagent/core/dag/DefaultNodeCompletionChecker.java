@@ -28,6 +28,7 @@ public class DefaultNodeCompletionChecker implements NodeCompletionChecker {
         return switch (node.getNodeType()) {
             case QUERY -> checkQueryNode(node, result, observation);
             case ACTION -> checkActionNode(node, result, observation);
+            case KNOWLEDGE_SEARCH -> checkKnowledgeSearchNode(node, result, observation);
             case LLM_REASON -> checkReasonNode(node, observation);
             case FINAL_ANSWER -> checkFinalAnswerNode(node, observation);
             case ASK_USER -> checkAskUserNode(node, result, observation);
@@ -44,6 +45,19 @@ public class DefaultNodeCompletionChecker implements NodeCompletionChecker {
         if (isEmpty(observation.getOutputs())) {
             return NodeCompletionResult.failed("QUERY_OUTPUTS_EMPTY",
                     "QUERY节点outputs不能为空: " + node.getNodeId());
+        }
+        return NodeCompletionResult.passed();
+    }
+
+    private NodeCompletionResult checkKnowledgeSearchNode(BoundDagNode node, NodeExecutionResult result,
+                                                          NodeObservation observation) {
+        if (!result.isSuccess() || !NodeExecutionStatus.SUCCESS.equals(observation.getStatus())) {
+            return NodeCompletionResult.failed("KNOWLEDGE_SEARCH_NOT_SUCCESS",
+                    "KNOWLEDGE_SEARCH节点未成功完成: " + node.getNodeId());
+        }
+        if (isEmpty(observation.getOutputs())) {
+            return NodeCompletionResult.failed("KNOWLEDGE_SEARCH_OUTPUTS_EMPTY",
+                    "KNOWLEDGE_SEARCH节点outputs不能为空: " + node.getNodeId());
         }
         return NodeCompletionResult.passed();
     }

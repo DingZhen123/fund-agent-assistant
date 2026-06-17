@@ -17,6 +17,10 @@
     <dependencies>
         <dependency>
             <groupId>com.fundagent</groupId>
+            <artifactId>fund-agent-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fundagent</groupId>
             <artifactId>fund-agent-core</artifactId>
         </dependency>
         <dependency>

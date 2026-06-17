@@ -21,6 +21,21 @@ capabilities:
       - sendReceiptFiles
     enabled: true
 
+  knowledge.search:
+    nodeType: KNOWLEDGE_SEARCH
+    domain: knowledge
+    intents:
+      - search
+      - query
+      - faq
+      - sop
+      - policy
+      - explain
+    description: 查询企业知识库、制度、SOP、FAQ、操作说明和业务规则；适合回答流程、规则、原因、异常处理、状态含义和权限说明类问题。当前可用知识库：fund.payment.sop（资金付款流程知识库，覆盖付款状态、回单生成、异常处理和权限说明）
+    bindableTools:
+      - knowledgeSearch
+    enabled: true
+
   reason.general:
     nodeType: LLM_REASON
     domain: general

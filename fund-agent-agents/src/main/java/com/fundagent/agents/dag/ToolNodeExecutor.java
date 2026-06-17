@@ -41,7 +41,9 @@ public class ToolNodeExecutor implements NodeExecutor {
             return false;
         }
         return ToolBindingStatus.BOUND.equals(node.getBindingStatus())
-                && (NodeType.QUERY.equals(node.getNodeType()) || NodeType.ACTION.equals(node.getNodeType()));
+                && (NodeType.QUERY.equals(node.getNodeType())
+                || NodeType.ACTION.equals(node.getNodeType())
+                || NodeType.KNOWLEDGE_SEARCH.equals(node.getNodeType()));
     }
 
     @Override

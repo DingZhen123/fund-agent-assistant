@@ -172,6 +172,7 @@ public class CapabilityDagRePlanner {
         return switch (NodeType.valueOf(nodeType)) {
             case QUERY -> "QueryAgent";
             case ACTION -> "ActionAgent";
+            case KNOWLEDGE_SEARCH -> "KnowledgeAgent";
             case LLM_REASON -> "ReasonAgent";
             case ASK_USER -> "AskUserAgent";
             case FINAL_ANSWER -> "AnswerAgent";

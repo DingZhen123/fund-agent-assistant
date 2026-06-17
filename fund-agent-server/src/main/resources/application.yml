@@ -48,6 +48,15 @@ agent:
       base-url: ${MCP_TOOL_BASE_URL:http://101.200.131.156:8091/mcp}
       api-key: ${MCP_TOOL_API_KEY:}
       timeout-ms: ${MCP_TOOL_TIMEOUT_MS:5000}
+  rag:
+    embedding-model: ${RAG_EMBEDDING_MODEL:text-embedding-3-small}
+    timeout-seconds: ${RAG_TIMEOUT_SECONDS:60}
+    source-directory: ${RAG_SOURCE_DIRECTORY:docs/knowledge}
+    default-knowledge-base-id: ${RAG_DEFAULT_KNOWLEDGE_BASE_ID:fund.payment.sop}
+    qdrant:
+      base-url: ${QDRANT_BASE_URL:http://101.200.131.156:6333}
+      api-key: ${QDRANT_API_KEY:}
+      collection: ${QDRANT_COLLECTION:fund_agent_knowledge}
 
 qq-bot:
   enabled: true
