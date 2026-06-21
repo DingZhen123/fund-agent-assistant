@@ -57,6 +57,14 @@ agent:
       base-url: ${QDRANT_BASE_URL:http://101.200.131.156:6333}
       api-key: ${QDRANT_API_KEY:}
       collection: ${QDRANT_COLLECTION:fund_agent_knowledge}
+  memory:
+    long-term:
+      enabled: ${LONG_TERM_MEMORY_ENABLED:true}
+      provider: ${LONG_TERM_MEMORY_PROVIDER:mem0}
+      mem0:
+        api-base: ${MEM0_API_BASE:https://api.mem0.ai}
+        api-key: ${MEM0_API_KEY:m0-ZGkkzxZozoTYI3fRiXSkNzkKJdAToD3LwMxwN77x}
+        timeout-seconds: ${MEM0_TIMEOUT_SECONDS:30}
 
 qq-bot:
   enabled: true
