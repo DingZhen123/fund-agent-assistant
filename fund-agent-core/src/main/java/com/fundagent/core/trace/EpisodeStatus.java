@@ -13,11 +13,14 @@ public enum EpisodeStatus {
     public boolean isTerminal() {
         return this == COMPLETED
                 || this == FAILED
-                || this == ABORTED
-                || this == RESULT_UNKNOWN;
+                || this == ABORTED;
     }
 
     public boolean isWaiting() {
         return this == WAITING_USER || this == WAITING_CONFIRMATION;
+    }
+
+    public boolean isSealable() {
+        return isTerminal();
     }
 }

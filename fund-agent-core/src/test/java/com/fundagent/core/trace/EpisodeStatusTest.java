@@ -11,7 +11,7 @@ class EpisodeStatusTest {
         assertThat(EpisodeStatus.COMPLETED.isTerminal()).isTrue();
         assertThat(EpisodeStatus.FAILED.isTerminal()).isTrue();
         assertThat(EpisodeStatus.ABORTED.isTerminal()).isTrue();
-        assertThat(EpisodeStatus.RESULT_UNKNOWN.isTerminal()).isTrue();
+        assertThat(EpisodeStatus.RESULT_UNKNOWN.isTerminal()).isFalse();
 
         assertThat(EpisodeStatus.CREATED.isTerminal()).isFalse();
         assertThat(EpisodeStatus.RUNNING.isTerminal()).isFalse();

@@ -6,7 +6,7 @@ import lombok.Value;
 import java.time.Instant;
 
 @Value
-@Builder
+@Builder(toBuilder = true)
 public class Evidence {
     String evidenceCode;
     String episodeCode;

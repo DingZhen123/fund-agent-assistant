@@ -468,6 +468,31 @@ Trace 中禁止出现：
 - 防止未经授权读取资金 Trace 数据；
 - 在后续安全里程碑中审计敏感 Trace 的访问行为。
 
+### 10.1 第一阶段领域模型规则
+
+当前领域模型采用不可变对象：
+
+- `AgentEpisode.append(...)` 不修改原 Episode，而是返回新的 Episode、受保护的 `TraceEvent`、新的 `TraceContext` 和因果关系。
+- `AgentTrace.append(...)` 将上述结果合并为新的完整 Trace 聚合，原聚合保持不变。
+- `AgentTrace.appendEvidence(...)` 对 Evidence 内容进行规范化并计算完整性 Hash，然后返回新的聚合。
+- `AgentTrace.seal(...)` 只允许对 `COMPLETED`、`FAILED`、`ABORTED` 状态封印。
+- `RESULT_UNKNOWN` 不是最终状态，不允许封印，可以在真实状态反查后恢复为运行态或进入明确终态。
+
+事件保护规则：
+
+```text
+原始 JSON
+→ Canonical JSON
+→ SHA-256 payloadHash
+→ previousHash + 事件安全字段
+→ SHA-256 eventHash
+→ HMAC-SHA256 eventSignature
+```
+
+HMAC 密钥不得进入领域对象、Trace、日志或数据库。当前实现要求密钥至少为 32 字节，后续由运行配置或密钥管理服务提供。
+
+本阶段的 Hash 和 HMAC 用于完整性与真实性校验，不属于业务数据的可逆加密。需要保密的资金字段仍需在进入 Trace 前完成脱敏或使用独立的数据加密机制。
+
 ## 11. 验收标准
 
 第一阶段只有在以下条件全部满足时才算完成：
