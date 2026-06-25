@@ -40,6 +40,10 @@ public class TraceSecurity {
                 .build();
     }
 
+    public String canonicalizePayload(String payloadJson) {
+        return canonicalizer.canonicalizeJson(payloadJson);
+    }
+
     public boolean verifyEvent(TraceEvent event) {
         if (event == null) {
             return false;

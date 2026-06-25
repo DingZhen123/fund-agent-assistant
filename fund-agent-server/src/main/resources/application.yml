@@ -28,6 +28,10 @@ mybatis-plus:
     map-underscore-to-camel-case: true
 
 agent:
+  trace:
+    enabled: ${AGENT_TRACE_ENABLED:false}
+    signing-key-id: ${AGENT_TRACE_SIGNING_KEY_ID:}
+    signing-key-base64: ${AGENT_TRACE_SIGNING_KEY_BASE64:}
   llm:
     api-base: ${LLM_API_BASE:https://api.openai-proxy.org/v1}
     api-key: ${LLM_API_KEY:sk-J7aob1TBQq4XsJrnEb5wnXt23njBwOb34fnLzdx5zBvJMPU8}

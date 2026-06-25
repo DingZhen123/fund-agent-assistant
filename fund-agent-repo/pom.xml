@@ -20,6 +20,10 @@
             <artifactId>fund-agent-common</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.fundagent</groupId>
+            <artifactId>fund-agent-core</artifactId>
+        </dependency>
+        <dependency>
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-boot-starter</artifactId>
             <version>${mybatis-plus.version}</version>

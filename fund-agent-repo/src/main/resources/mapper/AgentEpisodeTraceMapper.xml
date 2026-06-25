@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.fundagent.repo.mapper.AgentEpisodeMapper">
+
+    <insert id="insertIdempotent" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO agent_episodes (
+            episode_code, request_id, conversation_id, user_id_reference,
+            agent_version, original_goal, risk_level, status,
+            next_sequence_no, last_event_hash, event_count,
+            step_count, model_call_count, tool_call_count, token_usage,
+            final_error_code, final_failure_stage,
+            started_at, finished_at, elapsed_ms,
+            sealed, row_version,
+            created_at, updated_at, created_by, updated_by
+        ) VALUES (
+            #{episodeCode}, #{requestId}, #{conversationId}, #{userIdReference},
+            #{agentVersion}, #{originalGoal}, #{riskLevel}, #{status},
+            #{nextSequenceNo}, #{lastEventHash}, #{eventCount},
+            #{stepCount}, #{modelCallCount}, #{toolCallCount}, #{tokenUsage},
+            #{finalErrorCode}, #{finalFailureStage},
+            #{startedAt}, #{finishedAt}, #{elapsedMs},
+            #{sealed}, #{rowVersion},
+            #{createdAt}, #{updatedAt}, #{createdBy}, #{updatedBy}
+        )
+        ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
+    </insert>
+
+</mapper>
