@@ -537,7 +537,9 @@ public class PersistentTraceStore implements TraceStore {
                 && existing.getStatus() == command.getStatus()
                 && Objects.equals(existing.getReasonCode(), command.getReasonCode())
                 && Objects.equals(existing.getSummary(), command.getSummary())
-                && Objects.equals(existing.getPayloadJson(), security.canonicalizePayload(command.getPayloadJson()))
+                && Objects.equals(
+                security.canonicalizePayload(existing.getPayloadJson()),
+                security.canonicalizePayload(command.getPayloadJson()))
                 && existing.getPayloadSchemaVersion() == normalizedSchemaVersion(command.getPayloadSchemaVersion())
                 && Objects.equals(existing.getProducerId(), command.getProducerId())
                 && Objects.equals(existing.getOccurredAt(),
@@ -561,7 +563,9 @@ public class PersistentTraceStore implements TraceStore {
                 && Objects.equals(existing.getActualValueRedacted(), command.getActualValueRedacted())
                 && existing.getReliabilityLevel() == command.getReliabilityLevel()
                 && existing.getVerificationStatus() == command.getVerificationStatus()
-                && Objects.equals(existing.getPayloadJson(), security.canonicalizePayload(command.getPayloadJson()))
+                && Objects.equals(
+                security.canonicalizePayload(existing.getPayloadJson()),
+                security.canonicalizePayload(command.getPayloadJson()))
                 && Objects.equals(existing.getCollectedAt(),
                 converter.truncateToMicros(command.getCollectedAt()))
                 && Objects.equals(existing.getCreatedBy(), command.getActor());

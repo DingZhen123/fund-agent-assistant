@@ -548,6 +548,45 @@ AGENT_TRACE_SIGNING_KEY_BASE64=<至少32字节密钥的Base64编码>
 
 签名密钥没有代码或配置文件默认值，不得写入数据库、日志或代码仓库。
 
+### 10.3 真实 MySQL 集成测试
+
+真实数据库验证类：
+
+```text
+fund-agent-repo/src/test/java/com/fundagent/repo/trace/
+PersistentTraceStoreMySqlIntegrationTest.java
+```
+
+默认执行 `mvn test` 时该测试会被跳过。只有显式设置以下环境变量时才连接 MySQL：
+
+```text
+TRACE_MYSQL_IT=true
+TRACE_IT_DB_URL=jdbc:mysql://<host>:<port>/<database>?useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC
+TRACE_IT_DB_USERNAME=<username>
+TRACE_IT_DB_PASSWORD=<password>
+```
+
+运行命令：
+
+```bash
+mvn -q -pl fund-agent-repo -am \
+  -Dtest=PersistentTraceStoreMySqlIntegrationTest \
+  -Dsurefire.failIfNoSpecifiedTests=false \
+  test
+```
+
+测试覆盖：
+
+- Episode 与 `EPISODE_CREATED` 只创建一次；
+- 创建请求和事件追加的内容级幂等；
+- 相同幂等键、不同内容的冲突拒绝；
+- 两线程并发追加时 sequence 连续且 Hash 链不分叉；
+- 外层业务事务回滚后，`REQUIRES_NEW` Trace 仍然保留；
+- Relation 持久化故障时，Event 插入和 Episode 投影整体回滚；
+- 持久化后的完整 Trace 能够通过完整性校验。
+
+测试仅操作随机生成的 `IT_` 前缀 Trace 数据，并在每个测试结束后按外键顺序清理。目标账号需要对五张 Trace 表具备测试所需的 `SELECT`、`INSERT`、`UPDATE` 和 `DELETE` 权限。该测试必须指向测试数据库，禁止对生产数据库执行。
+
 ## 11. 验收标准
 
 第一阶段只有在以下条件全部满足时才算完成：
@@ -647,3 +686,103 @@ fund-agent-repo
 后续的 Trace 记录服务应依赖 `TraceStore` 存储契约。Planner、Runtime、NodeExecutor、工具执行、Verifier 和 Recovery 组件不得直接依赖数据库 Mapper。
 
 当前阶段只建立领域模型、状态枚举、存储契约、数据库实体和 Mapper，尚未实现哈希、签名、独立事务持久化或 DAG 执行链路接入。
+
+## 15. LLM 调用监管协议
+
+生产新 DAG 的 LLM 调用采用供应商无关协议：
+
+```text
+CapabilityDagPlanner / CapabilityDagRePlanner
+ToolNodeExecutor / ReasonNodeExecutor / AnswerNodeExecutor
+                    ↓
+             AgentLLMService
+                    ↓
+          TraceableLLMService
+                    ↓ delegate
+          AgentLLMService Provider
+                    ↓
+       OpenAIService / 其他模型实现
+```
+
+`TraceableLLMService` 只依赖 `AgentLLMService` 接口，不依赖 `OpenAIService`。切换模型供应商时，只需要替换底层 Provider 实现。
+
+### 15.1 LLMRequest
+
+`LLMRequest` 统一承载：
+
+```text
+traceContext
+callerType
+callerName
+nodeId
+capability
+systemPrompt
+history
+currentMessage
+responseFormat
+metadata
+```
+
+`history` 和 `metadata` 使用不可变副本，调用方后续修改原集合不会影响已经创建的请求。
+
+### 15.2 LLMResponse
+
+`LLMResponse` 统一承载：
+
+```text
+content
+provider
+model
+providerRequestId
+promptTokens
+completionTokens
+totalTokens
+finishReason
+elapsedMs
+traceContext
+```
+
+OpenAI 兼容 Provider 从响应中提取模型、Request ID、Token 和 finish reason。装饰器返回完成事件后的新 `TraceContext`，后续调用必须继续传递该上下文。
+
+### 15.3 TraceableLLMService 行为
+
+```text
+持久化 MODEL_CALL_STARTED
+→ 调用 AgentLLMService Provider
+→ 成功：持久化 MODEL_CALL_COMPLETED
+→ 失败：持久化 MODEL_CALL_FAILED
+```
+
+安全要求：
+
+- `MODEL_CALL_STARTED` 持久化失败时，不得调用模型。
+- 模型成功但 `MODEL_CALL_COMPLETED` 持久化失败时，不得向上层返回可靠成功。
+- 模型失败时必须先记录失败事件，再抛出原模型异常。
+- Prompt、历史消息、当前消息和模型原始输出不得直接进入 Trace Payload。
+- Trace 只保存 `promptHash`、`schemaHash`、`outputHash`、调用者、模型元数据、Token、耗时和错误分类。
+
+### 15.4 监管范围
+
+本期纳入：
+
+```text
+CapabilityDagPlanner
+CapabilityDagRePlanner
+ToolNodeExecutor
+ReasonNodeExecutor
+AnswerNodeExecutor
+```
+
+本期不纳入：
+
+```text
+ConversationSummaryService
+PromptLabService
+GraphTaskPlanner
+GraphAnswerGenerator
+PlannerAgent
+```
+
+`OpenAIService` 同时保留旧 `LLMService` 接口，供不纳入本期监管的系统调用和旧链路使用；新 DAG 后续通过具名 `traceableAgentLLMService` Bean 接入。
+
+当前协议、装饰器和 Provider 适配已经实现，但新 DAG 节点尚未切换。节点切换必须与 Chat 入口创建 Episode、`TraceContext` 全流程传递同时完成。

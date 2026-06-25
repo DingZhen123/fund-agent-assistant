@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 @Slf4j
-public class OpenAIService implements LLMService {
+public class OpenAIService implements LLMService, AgentLLMService {
 
     private final String apiBase;
     private final String apiKey;
@@ -35,6 +35,70 @@ public class OpenAIService implements LLMService {
                 .readTimeout(config.getTimeoutSeconds() * 2L, TimeUnit.SECONDS)
                 .protocols(java.util.List.of(okhttp3.Protocol.HTTP_1_1))
                 .build();
+    }
+
+    @Override
+    public LLMResponse call(LLMRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("LLMRequest must not be null");
+        }
+        LLMResponseFormat format = request.getResponseFormat();
+        boolean structured = format != null
+                && LLMResponseFormat.Type.JSON_SCHEMA.equals(format.getType());
+        String body = buildBody(
+                request.getSystemPrompt(),
+                request.getHistory(),
+                request.getCurrentMessage(),
+                false,
+                structured ? format.getSchemaName() : null,
+                structured ? format.getSchemaJson() : null);
+        Request httpRequest = buildRequest(body);
+        long start = System.currentTimeMillis();
+        try (Response response = httpClient.newCall(httpRequest).execute()) {
+            String responseBody = response.body() != null ? response.body().string() : "";
+            if (!response.isSuccessful()) {
+                log.error("LLM protocol error: status={}, body={}", response.code(), responseBody);
+                throw new LLMCallException(
+                        "LLM_HTTP_" + response.code(),
+                        "LLM API error: " + response.code(),
+                        response.code() == 408 || response.code() == 429 || response.code() >= 500);
+            }
+            JSONObject json = JSON.parseObject(responseBody);
+            JSONObject choice = json.getJSONArray("choices").getJSONObject(0);
+            JSONObject usage = json.getJSONObject("usage");
+            String providerRequestId = response.header("x-request-id");
+            if (providerRequestId == null || providerRequestId.isBlank()) {
+                providerRequestId = json.getString("id");
+            }
+            return LLMResponse.builder()
+                    .content(choice.getJSONObject("message").getString("content"))
+                    .provider("openai-compatible")
+                    .model(json.getString("model") != null ? json.getString("model") : model)
+                    .providerRequestId(providerRequestId)
+                    .promptTokens(integer(usage, "prompt_tokens"))
+                    .completionTokens(integer(usage, "completion_tokens"))
+                    .totalTokens(integer(usage, "total_tokens"))
+                    .finishReason(choice.getString("finish_reason"))
+                    .elapsedMs(System.currentTimeMillis() - start)
+                    .traceContext(request.getTraceContext())
+                    .build();
+        } catch (IOException e) {
+            log.error("LLM protocol request failed", e);
+            throw new LLMCallException(
+                    "LLM_IO_ERROR",
+                    "LLM request failed: " + e.getMessage(),
+                    true,
+                    e);
+        } catch (LLMCallException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            log.error("LLM protocol response parse failed", e);
+            throw new LLMCallException(
+                    "LLM_RESPONSE_INVALID",
+                    "LLM response is invalid",
+                    false,
+                    e);
+        }
     }
 
     @Override
@@ -173,5 +237,9 @@ public class OpenAIService implements LLMService {
                 .header("Content-Type", "application/json")
                 .post(RequestBody.create(body, MediaType.parse("application/json")))
                 .build();
+    }
+
+    private Integer integer(JSONObject object, String name) {
+        return object != null ? object.getInteger(name) : null;
     }
 }

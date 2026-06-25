@@ -26,10 +26,17 @@ import com.fundagent.core.dag.NodeRouter;
 import com.fundagent.core.dag.ReplanPatchValidator;
 import com.fundagent.core.dag.ToolBinder;
 import com.fundagent.core.llm.LLMConfig;
+import com.fundagent.core.llm.AgentLLMService;
+import com.fundagent.core.llm.LLMCallIdGenerator;
+import com.fundagent.core.llm.LLMContentHasher;
 import com.fundagent.core.llm.LLMService;
 import com.fundagent.core.llm.OpenAIService;
+import com.fundagent.core.llm.Sha256LLMContentHasher;
+import com.fundagent.core.llm.TraceableLLMService;
+import com.fundagent.core.llm.UUIDLLMCallIdGenerator;
 import com.fundagent.core.memory.DefaultMemoryAssembler;
 import com.fundagent.core.memory.MemoryAssembler;
+import com.fundagent.core.trace.TraceStore;
 import com.fundagent.core.tool.ToolRegistry;
 import com.fundagent.core.tool.catalog.ToolCatalog;
 import com.fundagent.core.tool.catalog.ToolCatalogProvider;
@@ -37,9 +44,12 @@ import com.fundagent.core.tool.provider.ToolProvider;
 import com.fundagent.core.tool.schema.ToolSchemaResolver;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.time.Clock;
 import java.util.List;
 
 @Slf4j
@@ -74,8 +84,34 @@ public class AgentAutoConfig {
     }
 
     @Bean
-    public LLMService llmService() {
+    public OpenAIService openAIService() {
         return new OpenAIService(llmConfig());
+    }
+
+    @Bean("rawAgentLLMService")
+    public AgentLLMService rawAgentLLMService(OpenAIService openAIService) {
+        return openAIService;
+    }
+
+    @Bean
+    public LLMContentHasher llmContentHasher() {
+        return new Sha256LLMContentHasher();
+    }
+
+    @Bean
+    public LLMCallIdGenerator llmCallIdGenerator() {
+        return new UUIDLLMCallIdGenerator();
+    }
+
+    @Bean("traceableAgentLLMService")
+    @ConditionalOnProperty(prefix = "agent.trace", name = "enabled", havingValue = "true")
+    public AgentLLMService traceableAgentLLMService(
+            @Qualifier("rawAgentLLMService") AgentLLMService delegate,
+            TraceStore traceStore,
+            LLMContentHasher contentHasher,
+            LLMCallIdGenerator callIdGenerator,
+            Clock traceClock) {
+        return new TraceableLLMService(delegate, traceStore, contentHasher, callIdGenerator, traceClock);
     }
 
     @Bean
