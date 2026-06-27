@@ -45,6 +45,7 @@ import com.fundagent.core.tool.schema.ToolSchemaResolver;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -91,6 +92,13 @@ public class AgentAutoConfig {
     @Bean("rawAgentLLMService")
     public AgentLLMService rawAgentLLMService(OpenAIService openAIService) {
         return openAIService;
+    }
+
+    @Bean("agentLLMService")
+    public AgentLLMService agentLLMService(
+            @Qualifier("rawAgentLLMService") AgentLLMService raw,
+            @Qualifier("traceableAgentLLMService") ObjectProvider<AgentLLMService> traceable) {
+        return traceable.getIfAvailable(() -> raw);
     }
 
     @Bean
@@ -182,8 +190,10 @@ public class AgentAutoConfig {
 
     @Bean
     public DagRuntime dagRuntime(NodeRouter nodeRouter, NodeCompletionChecker nodeCompletionChecker,
-                                 FinalDagVerifier finalDagVerifier) {
-        return new DagRuntime(nodeRouter, nodeCompletionChecker, finalDagVerifier);
+                                 FinalDagVerifier finalDagVerifier,
+                                 ObjectProvider<TraceStore> traceStoreProvider) {
+        return new DagRuntime(nodeRouter, nodeCompletionChecker, finalDagVerifier,
+                traceStoreProvider.getIfAvailable());
     }
 
     @Bean
@@ -205,16 +215,19 @@ public class AgentAutoConfig {
 
     @Bean
     public CapabilityDagPlanner capabilityDagPlanner(LLMService llmService,
+                                                     @Qualifier("agentLLMService") AgentLLMService agentLLMService,
                                                      CapabilityPlanningContextProvider planningContextProvider,
                                                      MemoryAssembler memoryAssembler,
                                                      DagPlanNormalizer dagPlanNormalizer) {
-        return new CapabilityDagPlanner(llmService, planningContextProvider, memoryAssembler, dagPlanNormalizer);
+        return new CapabilityDagPlanner(llmService, agentLLMService, planningContextProvider,
+                memoryAssembler, dagPlanNormalizer);
     }
 
     @Bean
     public CapabilityDagRePlanner capabilityDagRePlanner(LLMService llmService,
+                                                         @Qualifier("agentLLMService") AgentLLMService agentLLMService,
                                                          CapabilityPlanningContextProvider planningContextProvider) {
-        return new CapabilityDagRePlanner(llmService, planningContextProvider);
+        return new CapabilityDagRePlanner(llmService, agentLLMService, planningContextProvider);
     }
 
     @Bean
@@ -226,18 +239,23 @@ public class AgentAutoConfig {
     }
 
     @Bean
-    public ToolNodeExecutor toolNodeExecutor(LLMService llmService, ToolRegistry toolRegistry) {
-        return new ToolNodeExecutor(llmService, toolRegistry);
+    public ToolNodeExecutor toolNodeExecutor(LLMService llmService,
+                                             @Qualifier("agentLLMService") AgentLLMService agentLLMService,
+                                             ObjectProvider<TraceStore> traceStoreProvider,
+                                             ToolRegistry toolRegistry) {
+        return new ToolNodeExecutor(llmService, agentLLMService, traceStoreProvider.getIfAvailable(), toolRegistry);
     }
 
     @Bean
-    public ReasonNodeExecutor reasonNodeExecutor(LLMService llmService) {
-        return new ReasonNodeExecutor(llmService);
+    public ReasonNodeExecutor reasonNodeExecutor(LLMService llmService,
+                                                 @Qualifier("agentLLMService") AgentLLMService agentLLMService) {
+        return new ReasonNodeExecutor(llmService, agentLLMService);
     }
 
     @Bean
-    public AnswerNodeExecutor answerNodeExecutor(LLMService llmService) {
-        return new AnswerNodeExecutor(llmService);
+    public AnswerNodeExecutor answerNodeExecutor(LLMService llmService,
+                                                 @Qualifier("agentLLMService") AgentLLMService agentLLMService) {
+        return new AnswerNodeExecutor(llmService, agentLLMService);
     }
 
     @Bean

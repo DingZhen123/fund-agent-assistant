@@ -1,5 +1,6 @@
 package com.fundagent.core.dag;
 
+import com.fundagent.core.trace.TraceContext;
 import lombok.Builder;
 import lombok.Data;
 
@@ -10,4 +11,5 @@ public class DagExecutionContext {
     private String conversationId;
     private String userMessage;
     private String dagId;
+    private TraceContext traceContext;
 }

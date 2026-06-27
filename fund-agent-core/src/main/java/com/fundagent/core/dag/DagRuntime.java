@@ -1,22 +1,40 @@
 package com.fundagent.core.dag;
 
+import com.alibaba.fastjson2.JSON;
+import com.fundagent.core.trace.AppendTraceEventCommand;
+import com.fundagent.core.trace.TraceAppendResult;
+import com.fundagent.core.trace.TraceContext;
+import com.fundagent.core.trace.TraceEventStatus;
+import com.fundagent.core.trace.TraceEventType;
+import com.fundagent.core.trace.TraceStage;
+import com.fundagent.core.trace.TraceStore;
 import lombok.extern.slf4j.Slf4j;
 
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @Slf4j
 public class DagRuntime {
     private final NodeRouter nodeRouter;
     private final NodeCompletionChecker nodeCompletionChecker;
     private final FinalDagVerifier finalDagVerifier;
+    private final TraceStore traceStore;
 
     public DagRuntime(NodeRouter nodeRouter, NodeCompletionChecker nodeCompletionChecker,
                       FinalDagVerifier finalDagVerifier) {
+        this(nodeRouter, nodeCompletionChecker, finalDagVerifier, null);
+    }
+
+    public DagRuntime(NodeRouter nodeRouter, NodeCompletionChecker nodeCompletionChecker,
+                      FinalDagVerifier finalDagVerifier, TraceStore traceStore) {
         this.nodeRouter = nodeRouter;
         this.nodeCompletionChecker = nodeCompletionChecker;
         this.finalDagVerifier = finalDagVerifier;
+        this.traceStore = traceStore;
     }
 
     public DagRunResult run(BoundDagPlan plan, DagExecutionContext context) {
@@ -82,10 +100,23 @@ public class DagRuntime {
                     executor.getClass().getSimpleName(),
                     node.getCapability(),
                     boundToolNames(node));
+            appendNodeTrace(context, node, TraceEventType.NODE_STARTED, TraceEventStatus.STARTED,
+                    "DAG节点开始执行", Map.of(
+                            "dagId", safe(state.getDagId()),
+                            "nodeType", node.getNodeType() != null ? node.getNodeType().name() : "",
+                            "executor", executor.getClass().getSimpleName()));
             lastResult = executor.execute(node, state, context);
             state.addObservation(lastResult.getObservation());
             NodeCompletionResult completion = nodeCompletionChecker.check(node, lastResult, state);
             completionResults.put(node.getNodeId(), completion);
+            appendNodeTrace(context, node, nodeEventType(lastResult, completion), nodeStatus(lastResult, completion),
+                    nodeSummary(lastResult, completion), Map.of(
+                            "dagId", safe(state.getDagId()),
+                            "nodeType", node.getNodeType() != null ? node.getNodeType().name() : "",
+                            "success", lastResult.isSuccess(),
+                            "waitingUserInput", completion.isWaitingUserInput() || lastResult.isWaitingUserInput(),
+                            "completionPassed", completion.isPassed(),
+                            "errorCode", safe(resolveErrorCode(lastResult, completion))));
             log.info("DAG node executed: dagId={}, nodeId={}, type={}, capability={}, status={}, success={}, completionPassed={}, waitingUserInput={}",
                     state.getDagId(),
                     node.getNodeId(),
@@ -140,5 +171,85 @@ public class DagRuntime {
         state.setUserId(context != null ? context.getUserId() : null);
         state.setUserMessage(context != null ? context.getUserMessage() : null);
         return state;
+    }
+
+    private void appendNodeTrace(DagExecutionContext context, BoundDagNode node, TraceEventType eventType,
+                                 TraceEventStatus status, String summary, Map<String, Object> payload) {
+        if (traceStore == null || context == null || context.getTraceContext() == null || node == null) {
+            return;
+        }
+        TraceContext current = context.getTraceContext();
+        AppendTraceEventCommand command = AppendTraceEventCommand.builder()
+                .eventCode(eventCode(current, node, eventType))
+                .correlationId(current.getCorrelationId())
+                .eventType(eventType)
+                .stage(TraceStage.NODE_EXECUTION)
+                .nodeId(node.getNodeId())
+                .capability(node.getCapability())
+                .status(status)
+                .summary(summary != null && !summary.isBlank() ? summary : "DAG节点状态变更")
+                .payloadJson(JSON.toJSONString(payload))
+                .payloadSchemaVersion(1)
+                .producerId("DagRuntime")
+                .occurredAt(Instant.now())
+                .actor("SYSTEM:DagRuntime")
+                .build();
+        TraceAppendResult result = traceStore.append(current, command);
+        context.setTraceContext(result.getContext());
+    }
+
+    private TraceEventType nodeEventType(NodeExecutionResult result, NodeCompletionResult completion) {
+        if (completion != null && completion.isWaitingUserInput()
+                || result != null && result.isWaitingUserInput()) {
+            return TraceEventType.NODE_WAITING_USER;
+        }
+        if (result != null && result.getObservation() != null
+                && NodeExecutionStatus.SKIPPED.equals(result.getObservation().getStatus())) {
+            return TraceEventType.NODE_SKIPPED;
+        }
+        if (completion != null && !completion.isPassed() || result != null && !result.isSuccess()) {
+            return TraceEventType.NODE_FAILED;
+        }
+        return TraceEventType.NODE_COMPLETED;
+    }
+
+    private TraceEventStatus nodeStatus(NodeExecutionResult result, NodeCompletionResult completion) {
+        TraceEventType type = nodeEventType(result, completion);
+        return switch (type) {
+            case NODE_WAITING_USER -> TraceEventStatus.WAITING;
+            case NODE_SKIPPED -> TraceEventStatus.SKIPPED;
+            case NODE_FAILED -> TraceEventStatus.FAILED;
+            default -> TraceEventStatus.SUCCEEDED;
+        };
+    }
+
+    private String nodeSummary(NodeExecutionResult result, NodeCompletionResult completion) {
+        if (completion != null && !completion.isPassed()) {
+            return completion.getMessage();
+        }
+        if (result != null && result.getMessage() != null && !result.getMessage().isBlank()) {
+            return result.getMessage();
+        }
+        if (result != null && result.getObservation() != null) {
+            return result.getObservation().getSummary();
+        }
+        return "DAG节点执行完成";
+    }
+
+    private String resolveErrorCode(NodeExecutionResult result, NodeCompletionResult completion) {
+        if (completion != null && completion.getErrorCode() != null) {
+            return completion.getErrorCode();
+        }
+        return result != null ? result.getErrorCode() : null;
+    }
+
+    private String eventCode(TraceContext context, BoundDagNode node, TraceEventType eventType) {
+        String material = safe(context.getEpisodeCode()) + "|" + safe(context.getRequestId())
+                + "|" + safe(node.getNodeId()) + "|" + eventType.name();
+        return "EV_" + UUID.nameUUIDFromBytes(material.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private String safe(String value) {
+        return value == null ? "" : value;
     }
 }

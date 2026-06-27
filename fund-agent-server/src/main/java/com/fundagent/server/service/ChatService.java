@@ -1,6 +1,7 @@
 package com.fundagent.server.service;
 
 import com.alibaba.fastjson2.JSON;
+import com.fundagent.agents.dag.CapabilityDagPlanningResult;
 import com.fundagent.agents.dag.CapabilityDagPlanner;
 import com.fundagent.agents.dag.ReplanningDagRuntime;
 import com.fundagent.core.dag.BoundDagNode;
@@ -22,17 +23,37 @@ import com.fundagent.core.memory.Round;
 import com.fundagent.core.orchestration.OrchestrationEvent;
 import com.fundagent.core.orchestration.OrchestrationEventType;
 import com.fundagent.core.post.Post;
+import com.fundagent.core.trace.AppendTraceEventCommand;
+import com.fundagent.core.trace.CreateEpisodeCommand;
+import com.fundagent.core.trace.EpisodeStatus;
+import com.fundagent.core.trace.RiskLevel;
+import com.fundagent.core.trace.TraceAppendResult;
+import com.fundagent.core.trace.TraceContext;
+import com.fundagent.core.trace.TraceEventStatus;
+import com.fundagent.core.trace.TraceEventType;
+import com.fundagent.core.trace.TraceStage;
+import com.fundagent.core.trace.TraceStore;
 import com.fundagent.repo.entity.ConversationEntity;
 import com.fundagent.repo.mapper.ConversationMapper;
 import com.fundagent.repo.mapper.PostMapper;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
+import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.function.Consumer;
 
 @Slf4j
@@ -49,6 +70,8 @@ public class ChatService {
     private final ConversationSummaryService conversationSummaryService;
     private final ConversationMapper conversationMapper;
     private final PostMapper postMapper;
+    private final TraceStore traceStore;
+    private final String agentVersion;
 
     public ChatService(CapabilityDagPlanner capabilityDagPlanner,
                        DagPlanValidator dagPlanValidator, ToolBinder toolBinder,
@@ -57,7 +80,9 @@ public class ChatService {
                        MemoryService memoryService, EntityMemoryService entityMemoryService,
                        ConversationSummaryService conversationSummaryService,
                        ConversationMapper conversationMapper,
-                       PostMapper postMapper) {
+                       PostMapper postMapper,
+                       ObjectProvider<TraceStore> traceStoreProvider,
+                       @Value("${agent.harness.version:mainline-trace-v1}") String agentVersion) {
         this.capabilityDagPlanner = capabilityDagPlanner;
         this.dagPlanValidator = dagPlanValidator;
         this.toolBinder = toolBinder;
@@ -68,6 +93,8 @@ public class ChatService {
         this.conversationSummaryService = conversationSummaryService;
         this.conversationMapper = conversationMapper;
         this.postMapper = postMapper;
+        this.traceStore = traceStoreProvider.getIfAvailable();
+        this.agentVersion = agentVersion;
     }
 
     public void sendMessage(String userId, String message, String conversationId, SseEmitter emitter) {
@@ -151,9 +178,19 @@ public class ChatService {
 
     private String processDagMessage(SessionContext ctx, Memory memory, String userId, String message,
                                      Consumer<OrchestrationEvent> listener) {
-        emit(listener, OrchestrationEventType.ROUND_START, "DagRuntime", "开始执行DAG复杂任务...");
+        TraceContext traceContext = startEpisodeTrace(ctx, userId, message);
+        try {
+            emit(listener, OrchestrationEventType.ROUND_START, "DagRuntime", "开始执行DAG复杂任务...");
 
-        DagPlan capabilityDag = capabilityDagPlanner.plan(memory, message);
+        traceContext = appendPlanningTrace(traceContext, TraceEventType.PLAN_REQUESTED, TraceEventStatus.STARTED,
+                "开始请求能力DAG规划", Map.of(
+                        "conversationId", ctx.conversationId,
+                        "messageHash", sha256(message)));
+        CapabilityDagPlanningResult planningResult = planWithTrace(memory, message, traceContext);
+        DagPlan capabilityDag = planningResult.getPlan();
+        traceContext = planningResult.getTraceContext();
+        traceContext = appendPlanningTrace(traceContext, TraceEventType.PLAN_GENERATED, TraceEventStatus.SUCCEEDED,
+                "能力DAG已生成", buildPlanPayload(capabilityDag));
         log.info("Capability DAG planned: {}", JSON.toJSONString(capabilityDag));
         log.info("Capability DAG selected capabilities: dagId={}, capabilities={}",
                 capabilityDag != null ? capabilityDag.getDagId() : null,
@@ -172,6 +209,13 @@ public class ChatService {
                 capabilityDagValidation.isValid()
                         ? "能力DAG协议校验通过"
                         : "能力DAG协议校验失败: " + capabilityDagValidation.getMessage());
+        traceContext = appendPlanningTrace(traceContext,
+                capabilityDagValidation.isValid() ? TraceEventType.PLAN_VALIDATED : TraceEventType.PLAN_REJECTED,
+                capabilityDagValidation.isValid() ? TraceEventStatus.SUCCEEDED : TraceEventStatus.REJECTED,
+                capabilityDagValidation.isValid() ? "能力DAG协议校验通过" : "能力DAG协议校验失败",
+                buildPlanValidationPayload(capabilityDagValidation));
+        traceContext = appendToolBindingTrace(traceContext, TraceEventType.TOOL_BINDING_STARTED,
+                TraceEventStatus.STARTED, "开始能力DAG工具绑定", buildPlanPayload(capabilityDag));
         BoundDagPlan boundCapabilityDag = toolBinder.bind(capabilityDag);
         logBoundNodeTools(boundCapabilityDag);
         ToolBindingResult capabilityDagBinding = toolBinder.validate(boundCapabilityDag);
@@ -183,16 +227,24 @@ public class ChatService {
                 capabilityDagBinding.isSuccess()
                         ? "能力DAG工具绑定完成"
                         : "能力DAG工具绑定失败: " + capabilityDagBinding.getMessage());
+        traceContext = appendToolBindingTrace(traceContext,
+                capabilityDagBinding.isSuccess() ? TraceEventType.TOOL_BOUND : TraceEventType.TOOL_BINDING_FAILED,
+                capabilityDagBinding.isSuccess() ? TraceEventStatus.SUCCEEDED : TraceEventStatus.FAILED,
+                capabilityDagBinding.isSuccess() ? "能力DAG工具绑定完成" : "能力DAG工具绑定失败",
+                buildToolBindingPayload(boundCapabilityDag, capabilityDagBinding));
 
         ReplanningDagRunResult replanningRunResult = null;
         String finalAnswer;
         if (capabilityDagValidation.isValid() && capabilityDagBinding.isSuccess()) {
-            replanningRunResult = replanningDagRuntime.run(boundCapabilityDag, DagExecutionContext.builder()
+            DagExecutionContext executionContext = DagExecutionContext.builder()
                     .dagId(boundCapabilityDag.getDagId())
                     .conversationId(ctx.conversationId)
                     .userId(userId)
                     .userMessage(message)
-                    .build());
+                    .traceContext(traceContext)
+                    .build();
+            replanningRunResult = replanningDagRuntime.run(boundCapabilityDag, executionContext);
+            traceContext = executionContext.getTraceContext();
             emit(listener, OrchestrationEventType.AGENT_END, "DagRuntime",
                     "DAG执行完成: " + replanningRunResult.getFinalResult().getStatus());
             finalAnswer = extractFinalAnswer(replanningRunResult);
@@ -203,7 +255,6 @@ public class ChatService {
                     : "能力DAG协议校验失败: " + capabilityDagValidation.getMessage();
             emit(listener, OrchestrationEventType.ERROR, "DagRuntime", finalAnswer);
         }
-
         Round round = memory.newRound(message);
         Post userPost = Post.create("User", "CapabilityDagPlanner", message);
         userPost.addAttachment("capability_dag", JSON.toJSONString(capabilityDag));
@@ -222,12 +273,218 @@ public class ChatService {
         memoryService.savePosts(ctx.convId, round.getPosts(), round.getRoundNum());
         updateConversationMessageCount(ctx, memory);
         conversationSummaryService.refreshSummaryIfNeeded(ctx.convId, memory);
+        traceContext = finishEpisodeTrace(traceContext, replanningRunResult, capabilityDagValidation,
+                capabilityDagBinding, finalAnswer);
 
         emit(listener,
                 isDagSuccess(replanningRunResult) ? OrchestrationEventType.MESSAGE_END : OrchestrationEventType.ERROR,
                 "DagRuntime",
                 finalAnswer);
         return finalAnswer;
+        } catch (RuntimeException e) {
+            finishEpisodeTrace(traceContext, null, null, null, e.getClass().getSimpleName() + ": " + e.getMessage());
+            throw e;
+        }
+    }
+
+    private CapabilityDagPlanningResult planWithTrace(Memory memory, String message, TraceContext traceContext) {
+        if (traceContext == null) {
+            return new CapabilityDagPlanningResult(capabilityDagPlanner.plan(memory, message), null);
+        }
+        return capabilityDagPlanner.plan(memory, message, traceContext);
+    }
+
+    private TraceContext appendPlanningTrace(TraceContext traceContext, TraceEventType eventType,
+                                             TraceEventStatus status, String summary,
+                                             Map<String, Object> payload) {
+        return appendTrace(traceContext, eventType, TraceStage.PLANNING, status, summary, payload);
+    }
+
+    private TraceContext appendToolBindingTrace(TraceContext traceContext, TraceEventType eventType,
+                                                TraceEventStatus status, String summary,
+                                                Map<String, Object> payload) {
+        return appendTrace(traceContext, eventType, TraceStage.TOOL_BINDING, status, summary, payload);
+    }
+
+    private TraceContext appendTrace(TraceContext traceContext, TraceEventType eventType, TraceStage stage,
+                                     TraceEventStatus status, String summary, Map<String, Object> payload) {
+        if (traceContext == null || traceStore == null) {
+            return traceContext;
+        }
+        TraceAppendResult result = traceStore.append(traceContext, AppendTraceEventCommand.builder()
+                .eventCode(eventCode(traceContext, eventType))
+                .correlationId(traceContext.getCorrelationId())
+                .eventType(eventType)
+                .stage(stage)
+                .status(status)
+                .summary(summary)
+                .payloadJson(JSON.toJSONString(payload != null ? payload : Map.of()))
+                .payloadSchemaVersion(1)
+                .producerId("ChatService")
+                .occurredAt(Instant.now())
+                .actor("SYSTEM:ChatService")
+                .build());
+        return result.getContext();
+    }
+
+    private Map<String, Object> buildPlanPayload(DagPlan plan) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("dagId", plan != null ? safe(plan.getDagId()) : "");
+        payload.put("goalHash", plan != null ? sha256(plan.getGoal()) : "");
+        payload.put("nodeCount", plan != null && plan.getNodes() != null ? plan.getNodes().size() : 0);
+        payload.put("capabilities", plannedCapabilities(plan));
+        payload.put("nodes", plannedNodeTraceItems(plan));
+        return payload;
+    }
+
+    private Map<String, Object> buildPlanValidationPayload(DagPlanValidationResult validation) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("valid", validation != null && validation.isValid());
+        payload.put("errorCode", validation != null ? safe(validation.getErrorCode()) : "");
+        payload.put("messageHash", validation != null ? sha256(validation.getMessage()) : "");
+        return payload;
+    }
+
+    private Map<String, Object> buildToolBindingPayload(BoundDagPlan plan, ToolBindingResult binding) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("dagId", plan != null ? safe(plan.getDagId()) : "");
+        payload.put("success", binding != null && binding.isSuccess());
+        payload.put("errorCode", binding != null ? safe(binding.getErrorCode()) : "");
+        payload.put("messageHash", binding != null ? sha256(binding.getMessage()) : "");
+        payload.put("nodes", boundNodeTraceItems(plan));
+        return payload;
+    }
+
+    private TraceContext startEpisodeTrace(SessionContext ctx, String userId, String message) {
+        if (traceStore == null) {
+            throw new IllegalStateException(
+                    "主链路Trace未启用，拒绝执行。请配置 agent.trace.enabled=true 以及有效的Trace签名密钥。");
+        }
+        String requestId = "REQ_" + UUID.randomUUID();
+        String episodeCode = "EP_" + UUID.randomUUID();
+        Instant now = Instant.now();
+        TraceAppendResult created = traceStore.createEpisode(CreateEpisodeCommand.builder()
+                .episodeCode(episodeCode)
+                .requestId(requestId)
+                .conversationId(ctx.conversationId)
+                .userIdReference(userId)
+                .agentVersion(agentVersion)
+                .originalGoalRedacted(redactGoal(message))
+                .riskLevel(RiskLevel.MEDIUM)
+                .startedAt(now)
+                .actor("USER:" + userId)
+                .build());
+        return appendEpisodeLifecycle(
+                created.getContext(),
+                TraceEventType.EPISODE_STARTED,
+                TraceEventStatus.STARTED,
+                "用户主流程Episode开始执行",
+                Map.of("conversationId", ctx.conversationId, "agentVersion", agentVersion));
+    }
+
+    private TraceContext finishEpisodeTrace(TraceContext traceContext, ReplanningDagRunResult runResult,
+                                            DagPlanValidationResult validation,
+                                            ToolBindingResult binding,
+                                            String message) {
+        if (traceContext == null || traceStore == null) {
+            return traceContext;
+        }
+        TraceEventType eventType = resolveEpisodeFinishEvent(runResult, validation, binding);
+        TraceEventStatus status = switch (eventType) {
+            case EPISODE_COMPLETED -> TraceEventStatus.SUCCEEDED;
+            case EPISODE_WAITING_USER -> TraceEventStatus.WAITING;
+            case EPISODE_RESULT_UNKNOWN -> TraceEventStatus.RESULT_UNKNOWN;
+            default -> TraceEventStatus.FAILED;
+        };
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("runStatus", runResult != null && runResult.getFinalResult() != null
+                ? safe(runResult.getFinalResult().getStatus() != null
+                ? runResult.getFinalResult().getStatus().name() : null)
+                : "");
+        payload.put("validationValid", validation != null && validation.isValid());
+        payload.put("bindingSuccess", binding != null && binding.isSuccess());
+        payload.put("messageHash", sha256(message));
+        return appendEpisodeLifecycle(traceContext, eventType, status,
+                summaryForEpisodeFinish(eventType, message), payload);
+    }
+
+    private TraceEventType resolveEpisodeFinishEvent(ReplanningDagRunResult runResult,
+                                                     DagPlanValidationResult validation,
+                                                     ToolBindingResult binding) {
+        if (validation != null && !validation.isValid()) {
+            return TraceEventType.EPISODE_FAILED;
+        }
+        if (binding != null && !binding.isSuccess()) {
+            return TraceEventType.EPISODE_FAILED;
+        }
+        if (runResult == null || runResult.getFinalResult() == null) {
+            return TraceEventType.EPISODE_FAILED;
+        }
+        DagRunStatus status = runResult.getFinalResult().getStatus();
+        if (DagRunStatus.COMPLETED.equals(status)) {
+            return TraceEventType.EPISODE_COMPLETED;
+        }
+        if (DagRunStatus.WAITING_USER_INPUT.equals(status)) {
+            return TraceEventType.EPISODE_WAITING_USER;
+        }
+        return TraceEventType.EPISODE_FAILED;
+    }
+
+    private TraceContext appendEpisodeLifecycle(TraceContext traceContext, TraceEventType eventType,
+                                                TraceEventStatus status, String summary,
+                                                Map<String, Object> payload) {
+        if (traceContext == null || traceStore == null) {
+            return traceContext;
+        }
+        TraceAppendResult result = traceStore.append(traceContext, AppendTraceEventCommand.builder()
+                .eventCode(eventCode(traceContext, eventType))
+                .correlationId(traceContext.getCorrelationId())
+                .eventType(eventType)
+                .stage(TraceStage.EPISODE)
+                .status(status)
+                .summary(summary)
+                .payloadJson(JSON.toJSONString(payload != null ? payload : Map.of()))
+                .payloadSchemaVersion(1)
+                .producerId("ChatService")
+                .occurredAt(Instant.now())
+                .actor("SYSTEM:ChatService")
+                .build());
+        return result.getContext();
+    }
+
+    private String eventCode(TraceContext context, TraceEventType eventType) {
+        String material = safe(context.getEpisodeCode()) + "|" + safe(context.getRequestId()) + "|" + eventType.name();
+        return "EV_" + UUID.nameUUIDFromBytes(material.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private String summaryForEpisodeFinish(TraceEventType eventType, String message) {
+        return switch (eventType) {
+            case EPISODE_COMPLETED -> "用户主流程Episode执行完成";
+            case EPISODE_WAITING_USER -> "用户主流程Episode等待用户补充信息";
+            case EPISODE_RESULT_UNKNOWN -> "用户主流程Episode结果未知";
+            default -> "用户主流程Episode执行失败";
+        };
+    }
+
+    private String sha256(String value) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(safe(value).getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is not available", e);
+        }
+    }
+
+    private String redactGoal(String message) {
+        if (message == null || message.isBlank()) {
+            return "";
+        }
+        String redacted = message.replaceAll("\\b\\d{6,}\\b", "***");
+        return redacted.length() > 500 ? redacted.substring(0, 500) + "..." : redacted;
+    }
+
+    private String safe(String value) {
+        return value == null ? "" : value;
     }
 
     private List<String> plannedCapabilities(DagPlan plan) {
@@ -251,6 +508,41 @@ public class ChatService {
                         node.getNodeType(),
                         node.getCapability(),
                         node.getDependsOn()))
+                .toList();
+    }
+
+    private List<Map<String, Object>> plannedNodeTraceItems(DagPlan plan) {
+        if (plan == null || plan.getNodes() == null) {
+            return List.of();
+        }
+        return plan.getNodes().stream()
+                .map(node -> {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("nodeId", safe(node.getNodeId()));
+                    item.put("nodeType", node.getNodeType() != null ? node.getNodeType().name() : "");
+                    item.put("capability", safe(node.getCapability()));
+                    item.put("dependsOn", node.getDependsOn() != null ? node.getDependsOn() : List.of());
+                    item.put("expectedOutputs", node.getExpectedOutputs() != null ? node.getExpectedOutputs() : List.of());
+                    item.put("instructionHash", sha256(node.getInstruction()));
+                    return item;
+                })
+                .toList();
+    }
+
+    private List<Map<String, Object>> boundNodeTraceItems(BoundDagPlan plan) {
+        if (plan == null || plan.getNodes() == null) {
+            return List.of();
+        }
+        return plan.getNodes().stream()
+                .map(node -> {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("nodeId", safe(node.getNodeId()));
+                    item.put("nodeType", node.getNodeType() != null ? node.getNodeType().name() : "");
+                    item.put("capability", safe(node.getCapability()));
+                    item.put("bindingStatus", node.getBindingStatus() != null ? node.getBindingStatus().name() : "");
+                    item.put("tools", boundToolNames(node));
+                    return item;
+                })
                 .toList();
     }
 

@@ -14,24 +14,56 @@ import com.fundagent.core.dag.NodeObservation;
 import com.fundagent.core.dag.NodeType;
 import com.fundagent.core.dag.ToolBindingStatus;
 import com.fundagent.core.dag.ToolCallRecord;
+import com.fundagent.core.llm.AgentLLMService;
+import com.fundagent.core.llm.LLMCallerType;
+import com.fundagent.core.llm.LLMRequest;
+import com.fundagent.core.llm.LLMResponse;
+import com.fundagent.core.llm.LLMResponseFormat;
 import com.fundagent.core.llm.LLMService;
+import com.fundagent.core.trace.AppendTraceEventCommand;
+import com.fundagent.core.trace.TraceAppendResult;
+import com.fundagent.core.trace.TraceContext;
+import com.fundagent.core.trace.TraceEventStatus;
+import com.fundagent.core.trace.TraceEventType;
+import com.fundagent.core.trace.TraceStage;
+import com.fundagent.core.trace.TraceStore;
 import com.fundagent.core.tool.ToolRegistry;
 import com.fundagent.core.tool.ToolResult;
 import lombok.extern.slf4j.Slf4j;
 
-import java.util.HashSet;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
+import java.util.HexFormat;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.UUID;
 
 @Slf4j
 public class ToolNodeExecutor implements NodeExecutor {
     private final LLMService llmService;
+    private final AgentLLMService agentLLMService;
+    private final TraceStore traceStore;
     private final ToolRegistry toolRegistry;
 
     public ToolNodeExecutor(LLMService llmService, ToolRegistry toolRegistry) {
         this.llmService = llmService;
+        this.agentLLMService = null;
+        this.traceStore = null;
+        this.toolRegistry = toolRegistry;
+    }
+
+    public ToolNodeExecutor(LLMService llmService, AgentLLMService agentLLMService, ToolRegistry toolRegistry) {
+        this(llmService, agentLLMService, null, toolRegistry);
+    }
+
+    public ToolNodeExecutor(LLMService llmService, AgentLLMService agentLLMService,
+                            TraceStore traceStore, ToolRegistry toolRegistry) {
+        this.llmService = llmService;
+        this.agentLLMService = agentLLMService;
+        this.traceStore = traceStore;
         this.toolRegistry = toolRegistry;
     }
 
@@ -78,7 +110,29 @@ public class ToolNodeExecutor implements NodeExecutor {
         }
 
         Map<String, Object> args = decideToolParams(node, selectedTool, state, context, decision);
-        ToolResult toolResult = toolRegistry.execute(toolName, args);
+        appendToolTrace(context, node, toolName, TraceEventType.TOOL_CALL_STARTED, TraceEventStatus.STARTED,
+                null, "工具调用开始", Map.of(
+                        "argsHash", sha256(JSON.toJSONString(args)),
+                        "providerType", safe(selectedTool.getProviderType()),
+                        "riskLevel", safe(selectedTool.getRiskLevel())));
+        ToolResult toolResult;
+        try {
+            toolResult = toolRegistry.execute(toolName, args);
+        } catch (RuntimeException e) {
+            appendToolTrace(context, node, toolName, TraceEventType.TOOL_CALL_RESULT_UNKNOWN,
+                    TraceEventStatus.RESULT_UNKNOWN, e.getClass().getSimpleName(), "工具调用结果未知",
+                    Map.of("argsHash", sha256(JSON.toJSONString(args))));
+            throw e;
+        }
+        appendToolTrace(context, node, toolName,
+                toolResult.isSuccess() ? TraceEventType.TOOL_CALL_SUCCEEDED : TraceEventType.TOOL_CALL_FAILED,
+                toolResult.isSuccess() ? TraceEventStatus.SUCCEEDED : TraceEventStatus.FAILED,
+                toolResult.getErrorCode(),
+                toolResult.isSuccess() ? "工具调用成功" : "工具调用失败",
+                Map.of(
+                        "argsHash", sha256(JSON.toJSONString(args)),
+                        "success", toolResult.isSuccess(),
+                        "errorCode", safe(toolResult.getErrorCode())));
         ToolCallRecord callRecord = ToolCallRecord.builder()
                 .toolName(toolName)
                 .args(args)
@@ -108,7 +162,11 @@ public class ToolNodeExecutor implements NodeExecutor {
     }
 
     private ToolNodeSelectionDecision decideToolSelection(BoundDagNode node, DagGraphState state, DagExecutionContext context) {
-        String raw = llmService.chatStructured(
+        String raw = callStructured(
+                context,
+                node,
+                LLMCallerType.TOOL_NODE_SELECTION,
+                "ToolNodeExecutor",
                 buildSystemPrompt(node),
                 List.of(),
                 buildCurrentMessage(node, state, context),
@@ -120,7 +178,11 @@ public class ToolNodeExecutor implements NodeExecutor {
 
     private Map<String, Object> decideToolParams(BoundDagNode node, BoundTool selectedTool, DagGraphState state,
                                                  DagExecutionContext context, ToolNodeSelectionDecision selection) {
-        String raw = llmService.chatStructured(
+        String raw = callStructured(
+                context,
+                node,
+                LLMCallerType.TOOL_PARAMS_GENERATION,
+                "ToolParamsGenerator",
                 buildToolParamsSystemPrompt(node, selectedTool, selection),
                 List.of(),
                 buildCurrentMessage(node, state, context),
@@ -129,6 +191,70 @@ public class ToolNodeExecutor implements NodeExecutor {
         log.info("ToolNodeExecutor params raw: nodeId={}, tool={}, raw={}",
                 node.getNodeId(), selectedTool.getToolName(), raw);
         return JSON.parseObject(raw);
+    }
+
+    private void appendToolTrace(DagExecutionContext context, BoundDagNode node, String toolName,
+                                 TraceEventType eventType, TraceEventStatus status, String reasonCode,
+                                 String summary, Map<String, Object> payload) {
+        if (traceStore == null || context == null || context.getTraceContext() == null) {
+            return;
+        }
+        TraceContext current = context.getTraceContext();
+        TraceAppendResult result = traceStore.append(current, AppendTraceEventCommand.builder()
+                .eventCode(eventCode(current, node, toolName, eventType))
+                .correlationId(current.getCorrelationId())
+                .eventType(eventType)
+                .stage(TraceStage.TOOL_CALL)
+                .nodeId(node.getNodeId())
+                .capability(node.getCapability())
+                .toolName(toolName)
+                .status(status)
+                .reasonCode(reasonCode)
+                .summary(summary)
+                .payloadJson(JSON.toJSONString(payload != null ? payload : Map.of()))
+                .payloadSchemaVersion(1)
+                .producerId("ToolNodeExecutor")
+                .occurredAt(Instant.now())
+                .actor("SYSTEM:ToolNodeExecutor")
+                .build());
+        context.setTraceContext(result.getContext());
+    }
+
+    private String eventCode(TraceContext context, BoundDagNode node, String toolName, TraceEventType eventType) {
+        String material = safe(context.getEpisodeCode()) + "|" + safe(context.getRequestId())
+                + "|" + safe(node.getNodeId()) + "|" + safe(toolName) + "|" + eventType.name();
+        return "EV_" + UUID.nameUUIDFromBytes(material.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private String sha256(String value) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(safe(value).getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is not available", e);
+        }
+    }
+
+    private String callStructured(DagExecutionContext context, BoundDagNode node, LLMCallerType callerType,
+                                  String callerName, String systemPrompt,
+                                  List<com.fundagent.common.model.Message> history, String currentMessage,
+                                  String schemaName, String schemaJson) {
+        if (agentLLMService != null && context != null && context.getTraceContext() != null) {
+            LLMResponse response = agentLLMService.call(LLMRequest.builder()
+                    .traceContext(context.getTraceContext())
+                    .callerType(callerType)
+                    .callerName(callerName)
+                    .nodeId(node.getNodeId())
+                    .capability(node.getCapability())
+                    .systemPrompt(systemPrompt)
+                    .history(history)
+                    .currentMessage(currentMessage)
+                    .responseFormat(LLMResponseFormat.jsonSchema(schemaName, schemaJson))
+                    .build());
+            context.setTraceContext(response.getTraceContext());
+            return response.getContent();
+        }
+        return llmService.chatStructured(systemPrompt, history, currentMessage, schemaName, schemaJson);
     }
 
     private String buildSystemPrompt(BoundDagNode node) {

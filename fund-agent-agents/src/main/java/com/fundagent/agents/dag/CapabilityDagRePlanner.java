@@ -9,30 +9,67 @@ import com.fundagent.core.dag.NodeType;
 import com.fundagent.core.dag.ReplanAction;
 import com.fundagent.core.dag.ReplanContext;
 import com.fundagent.core.dag.ReplanPatch;
+import com.fundagent.core.llm.AgentLLMService;
+import com.fundagent.core.llm.LLMCallerType;
+import com.fundagent.core.llm.LLMRequest;
+import com.fundagent.core.llm.LLMResponse;
+import com.fundagent.core.llm.LLMResponseFormat;
 import com.fundagent.core.llm.LLMService;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 public class CapabilityDagRePlanner {
     private final LLMService llmService;
+    private final AgentLLMService agentLLMService;
     private final CapabilityPlanningContextProvider planningContextProvider;
 
     public CapabilityDagRePlanner(LLMService llmService,
                                   CapabilityPlanningContextProvider planningContextProvider) {
         this.llmService = llmService;
+        this.agentLLMService = null;
+        this.planningContextProvider = planningContextProvider;
+    }
+
+    public CapabilityDagRePlanner(LLMService llmService,
+                                  AgentLLMService agentLLMService,
+                                  CapabilityPlanningContextProvider planningContextProvider) {
+        this.llmService = llmService;
+        this.agentLLMService = agentLLMService;
         this.planningContextProvider = planningContextProvider;
     }
 
     public ReplanPatch replan(ReplanContext context) {
         CapabilityPlanningContext planningContext = planningContextProvider.build(null, context.getUserMessage());
-        String raw = llmService.chatStructured(
-                buildSystemPrompt(planningContext),
-                List.of(),
-                buildUserMessage(context),
-                "replan_patch",
-                buildReplanPatchSchema(planningContext.getCapabilities()));
+        String systemPrompt = buildSystemPrompt(planningContext);
+        String userMessage = buildUserMessage(context);
+        String schema = buildReplanPatchSchema(planningContext.getCapabilities());
+        String raw;
+        if (agentLLMService != null && context.getTraceContext() != null) {
+            LLMResponse response = agentLLMService.call(LLMRequest.builder()
+                    .traceContext(context.getTraceContext())
+                    .callerType(LLMCallerType.REPLANNER)
+                    .callerName("CapabilityDagRePlanner")
+                    .capability("dag.replanning")
+                    .systemPrompt(systemPrompt)
+                    .history(List.of())
+                    .currentMessage(userMessage)
+                    .responseFormat(LLMResponseFormat.jsonSchema("replan_patch", schema))
+                    .metadata(Map.of("failedNodeId",
+                            context.getFailedNode() != null ? context.getFailedNode().getNodeId() : ""))
+                    .build());
+            context.setTraceContext(response.getTraceContext());
+            raw = response.getContent();
+        } else {
+            raw = llmService.chatStructured(
+                    systemPrompt,
+                    List.of(),
+                    userMessage,
+                    "replan_patch",
+                    schema);
+        }
         log.info("CapabilityDagRePlanner raw: {}", raw);
         return JSON.parseObject(raw, ReplanPatch.class);
     }

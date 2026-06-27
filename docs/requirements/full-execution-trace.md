@@ -685,7 +685,7 @@ fund-agent-repo
 
 后续的 Trace 记录服务应依赖 `TraceStore` 存储契约。Planner、Runtime、NodeExecutor、工具执行、Verifier 和 Recovery 组件不得直接依赖数据库 Mapper。
 
-当前阶段只建立领域模型、状态枚举、存储契约、数据库实体和 Mapper，尚未实现哈希、签名、独立事务持久化或 DAG 执行链路接入。
+当前阶段已经完成 Trace 领域模型、状态枚举、存储契约、数据库实体、Mapper、哈希签名、独立事务持久化，以及新 DAG 主链路的第一版接入。
 
 ## 15. LLM 调用监管协议
 
@@ -783,6 +783,104 @@ GraphAnswerGenerator
 PlannerAgent
 ```
 
-`OpenAIService` 同时保留旧 `LLMService` 接口，供不纳入本期监管的系统调用和旧链路使用；新 DAG 后续通过具名 `traceableAgentLLMService` Bean 接入。
+`OpenAIService` 同时保留旧 `LLMService` 接口，供不纳入本期监管的系统调用和旧链路使用；新 DAG 主链路通过 `agentLLMService` Bean 接入。该 Bean 在 `agent.trace.enabled=true` 时优先使用 `traceableAgentLLMService`，否则回退到底层 raw Provider。
 
-当前协议、装饰器和 Provider 适配已经实现，但新 DAG 节点尚未切换。节点切换必须与 Chat 入口创建 Episode、`TraceContext` 全流程传递同时完成。
+## 16. 新 DAG 主链路接入状态
+
+新 DAG 主链路的第一版 Trace 闭环如下：
+
+```text
+ChatService
+  -> TraceStore.createEpisode
+  -> EPISODE_STARTED
+  -> CapabilityDagPlanner.plan(..., TraceContext)
+  -> DagRuntime / ReplanningDagRuntime
+  -> ToolNodeExecutor / ReasonNodeExecutor / AnswerNodeExecutor
+  -> CapabilityDagRePlanner
+  -> EPISODE_COMPLETED / EPISODE_FAILED / EPISODE_WAITING_USER
+```
+
+### 16.1 Episode 创建点
+
+`ChatService` 是用户主流程 Episode 的创建点。主流程在进入 Planner 之前先创建 `AgentEpisode`，并追加 `EPISODE_STARTED`。如果 Trace 持久化失败，主流程不会继续调用 Planner 或模型。
+
+主链路必须 fail-closed：如果 `TraceStore` 未启用或未注入，`ChatService` 必须拒绝执行用户 DAG 主流程，不能回退成无 Trace 执行。`agent.trace.enabled=false` 只允许旧调试入口、后台任务或尚未纳入本期监管的链路继续使用 raw LLM，不适用于用户主流程。
+
+### 16.2 TraceContext 传播
+
+`DagExecutionContext` 承载当前 `TraceContext`。每次 Trace append 后，调用方必须使用返回的新 `TraceContext` 继续后续调用。
+
+已接入传播点：
+
+- `CapabilityDagPlanner`
+- `DagRuntime`
+- `ReplanningDagRuntime`
+- `CapabilityDagRePlanner`
+- `ToolNodeExecutor`
+- `ReasonNodeExecutor`
+- `AnswerNodeExecutor`
+
+### 16.3 规划与绑定语义事件
+
+主链路不仅记录 LLM 调用，还必须记录系统接受后的规划语义：
+
+- `PLAN_REQUESTED`：开始请求能力 DAG 规划；
+- `PLAN_GENERATED`：Planner 输出已被系统解析为 DAG Plan；
+- `PLAN_VALIDATED`：DAG Plan 通过协议和 capability 校验；
+- `PLAN_REJECTED`：DAG Plan 被系统校验拒绝；
+- `TOOL_BINDING_STARTED`：开始将 capability 节点绑定到工具；
+- `TOOL_BOUND`：工具绑定成功；
+- `TOOL_BINDING_FAILED`：工具绑定失败。
+
+`PLAN_GENERATED` 的 Payload 必须包含 `dagId`、`goalHash`、`nodeCount`、`capabilities` 和节点摘要。节点摘要记录 `nodeId`、`nodeType`、`capability`、`dependsOn`、`expectedOutputs` 和 `instructionHash`，不得记录原始用户消息、完整 Prompt、完整模型输出或未脱敏 instruction。
+
+这样 Trace 可以回答：
+
+```text
+Planner 生成了哪些节点？
+系统是否接受了这个计划？
+为什么后续 Runtime 会执行这些节点？
+能力节点最终绑定到了哪些工具？
+```
+
+### 16.4 节点事件
+
+`DagRuntime` 在节点执行前追加 `NODE_STARTED`，在节点执行和节点完成检查之后追加以下之一：
+
+- `NODE_COMPLETED`
+- `NODE_FAILED`
+- `NODE_SKIPPED`
+- `NODE_WAITING_USER`
+
+节点事件只记录节点 ID、能力、节点类型、执行状态、完成检查结果和错误码等结构化元数据，不写入原始用户消息、Prompt 或模型输出。
+
+### 16.5 LLM 调用事件
+
+主链路中带 `TraceContext` 的 LLM 调用统一走 `AgentLLMService`，由 `TraceableLLMService` 追加：
+
+- `MODEL_CALL_STARTED`
+- `MODEL_CALL_COMPLETED`
+- `MODEL_CALL_FAILED`
+
+无 `TraceContext` 的调试入口和旧链路仍可回退到旧 `LLMService`，避免把本期未纳入监管的后台行为误挂到用户 Episode 下。
+
+### 16.6 工具调用事件
+
+`ToolNodeExecutor` 在真实工具执行前后追加：
+
+- `TOOL_CALL_STARTED`
+- `TOOL_CALL_SUCCEEDED`
+- `TOOL_CALL_FAILED`
+- `TOOL_CALL_RESULT_UNKNOWN`
+
+工具 Trace 记录工具名、节点 ID、能力、Provider、风险等级、参数 Hash、成功状态和错误码。不得写入原始工具参数或原始工具结果。
+
+### 16.7 当前边界
+
+本期主链路闭环不包含：
+
+- 后台 Conversation Summary 的独立系统 Episode；
+- Policy / Confirmation / Evidence 的业务级接入；
+- Episode 自动 Seal。
+
+这些能力需要在后续阶段按资金安全要求继续接入。

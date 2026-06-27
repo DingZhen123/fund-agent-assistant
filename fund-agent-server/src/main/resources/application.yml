@@ -29,9 +29,9 @@ mybatis-plus:
 
 agent:
   trace:
-    enabled: ${AGENT_TRACE_ENABLED:false}
-    signing-key-id: ${AGENT_TRACE_SIGNING_KEY_ID:}
-    signing-key-base64: ${AGENT_TRACE_SIGNING_KEY_BASE64:}
+    enabled: ${AGENT_TRACE_ENABLED:true}
+    signing-key-id: ${AGENT_TRACE_SIGNING_KEY_ID:test-trace-key-v1}
+    signing-key-base64: ${AGENT_TRACE_SIGNING_KEY_BASE64:5/Oe+h7LFXTZVQ5sypJU7sSB/s3mHVeaxQO5EWxBXY8=}
   llm:
     api-base: ${LLM_API_BASE:https://api.openai-proxy.org/v1}
     api-key: ${LLM_API_KEY:sk-J7aob1TBQq4XsJrnEb5wnXt23njBwOb34fnLzdx5zBvJMPU8}

@@ -10,6 +10,11 @@ import com.fundagent.core.dag.NodeExecutionStatus;
 import com.fundagent.core.dag.NodeExecutor;
 import com.fundagent.core.dag.NodeObservation;
 import com.fundagent.core.dag.NodeType;
+import com.fundagent.core.llm.AgentLLMService;
+import com.fundagent.core.llm.LLMCallerType;
+import com.fundagent.core.llm.LLMRequest;
+import com.fundagent.core.llm.LLMResponse;
+import com.fundagent.core.llm.LLMResponseFormat;
 import com.fundagent.core.llm.LLMService;
 import lombok.extern.slf4j.Slf4j;
 
@@ -20,10 +25,24 @@ import java.util.Map;
 @Slf4j
 public class AnswerNodeExecutor implements NodeExecutor {
     private final LLMService llmService;
+    private final AgentLLMService agentLLMService;
     private final String answerSchema;
 
     public AnswerNodeExecutor(LLMService llmService) {
         this.llmService = llmService;
+        this.agentLLMService = null;
+        this.answerSchema = buildAnswerSchema();
+    }
+
+    public AnswerNodeExecutor(AgentLLMService agentLLMService) {
+        this.llmService = null;
+        this.agentLLMService = agentLLMService;
+        this.answerSchema = buildAnswerSchema();
+    }
+
+    public AnswerNodeExecutor(LLMService llmService, AgentLLMService agentLLMService) {
+        this.llmService = llmService;
+        this.agentLLMService = agentLLMService;
         this.answerSchema = buildAnswerSchema();
     }
 
@@ -41,7 +60,9 @@ public class AnswerNodeExecutor implements NodeExecutor {
             return NodeExecutionResult.failed(observation, "UNSUPPORTED_NODE", observation.getError());
         }
 
-        String raw = llmService.chatStructured(
+        String raw = callStructured(
+                context,
+                node,
                 buildSystemPrompt(),
                 List.of(),
                 buildCurrentMessage(node, state, context),
@@ -62,6 +83,27 @@ public class AnswerNodeExecutor implements NodeExecutor {
                 .elapsedMs(System.currentTimeMillis() - start)
                 .build();
         return NodeExecutionResult.success(observation);
+    }
+
+    private String callStructured(DagExecutionContext context, BoundDagNode node, String systemPrompt,
+                                  List<com.fundagent.common.model.Message> history, String currentMessage,
+                                  String schemaName, String schemaJson) {
+        if (agentLLMService != null && context != null && context.getTraceContext() != null) {
+            LLMResponse response = agentLLMService.call(LLMRequest.builder()
+                    .traceContext(context.getTraceContext())
+                    .callerType(LLMCallerType.ANSWER_NODE)
+                    .callerName("AnswerNodeExecutor")
+                    .nodeId(node.getNodeId())
+                    .capability(node.getCapability())
+                    .systemPrompt(systemPrompt)
+                    .history(history)
+                    .currentMessage(currentMessage)
+                    .responseFormat(LLMResponseFormat.jsonSchema(schemaName, schemaJson))
+                    .build());
+            context.setTraceContext(response.getTraceContext());
+            return response.getContent();
+        }
+        return llmService.chatStructured(systemPrompt, history, currentMessage, schemaName, schemaJson);
     }
 
     private String buildSystemPrompt() {

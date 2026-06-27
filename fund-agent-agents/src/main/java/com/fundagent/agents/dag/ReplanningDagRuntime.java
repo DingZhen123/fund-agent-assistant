@@ -44,6 +44,9 @@ public class ReplanningDagRuntime {
 
         ReplanContext replanContext = buildContext(context, plan, initialRunResult);
         ReplanPatch patch = rePlanner.replan(replanContext);
+        if (context != null) {
+            context.setTraceContext(replanContext.getTraceContext());
+        }
         ReplanPatchValidationResult validation = patchValidator.validate(patch, replanContext);
         if (!validation.isValid() || !ReplanAction.APPEND_NODES.equals(patch.getAction())) {
             return ReplanningDagRunResult.noReplan(initialRunResult, patch, validation);
@@ -70,6 +73,7 @@ public class ReplanningDagRuntime {
         BoundDagNode failedNode = findFailedNode(plan, runResult);
         return ReplanContext.builder()
                 .userMessage(context != null ? context.getUserMessage() : null)
+                .traceContext(context != null ? context.getTraceContext() : null)
                 .boundDagPlan(plan)
                 .runResult(runResult)
                 .failedNode(failedNode)
